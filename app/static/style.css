@@ -1,0 +1,814 @@
+/* ============================================================
+   kavita-epaper — e-ink optimized stylesheet
+   Target device: OBOOK6 (6", 1072x1448 native, ~375x500 CSS px portrait)
+   (Version tracked in /VERSION at project root.)
+   ============================================================ */
+
+:root {
+  --ink:   #000;
+  --paper: #fff;
+  --gray:  #888;
+  --line:  2px;
+  --tap:   48px;
+  --tap-lg: 56px;
+  --font-display: "Newsreader", "Iowan Old Style", "Charter", Georgia, serif;
+  --font-chrome:  "JetBrains Mono", ui-monospace, "Menlo", monospace;
+}
+
+/* Dark theme — opt-in via :root.theme-dark (applied by inline script in
+   base.html before render to avoid flash). Every chrome surface in this
+   sheet uses --ink/--paper/--gray, so this single block flips the whole UI.
+   --gray (#888) is a true midtone, readable against both backgrounds. */
+:root.theme-dark {
+  --ink:   #e8e8e8;   /* warm off-white — full white is harsh in dark mode */
+  --paper: #1a1a1a;   /* near-black — pure #000 looks flat on LCD/OLED tablets */
+  --gray:  #999;      /* slightly lifted from #888 for contrast against paper */
+}
+
+/* Defensive cascade for EPUB content. Kavita's book HTML often has its own
+   CSS setting `color: black` on body/p/etc. Our selector specificity (0,0,2,1)
+   beats their typical `body p { color: #000 }` (0,0,1,2) without !important.
+   Inline styles (rare in well-made EPUBs) still win — accept that. */
+:root.theme-dark .reader-inner,
+:root.theme-dark .reader-inner :is(p, h1, h2, h3, h4, h5, h6, li, blockquote, span, em, strong, i, b, a, td, th, div) {
+  color: var(--ink);
+  background-color: transparent;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: never;
+  -webkit-text-size-adjust: 100%;
+}
+html { height: 100%; overflow: hidden; }
+
+/* Library + series pages: lock to actual viewport via position:fixed.
+   Using bottom:0 (not 100dvh) sidesteps Android Chrome PWA bugs where the
+   dvh value goes stale across page navigations and pushes content past the
+   visible area. position:fixed with inset:0 is always the literal viewport. */
+body.page-library,
+body.page-series,
+body.page-read {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+}
+
+img { display: block; max-width: 100%; height: auto; }
+a { color: var(--ink); text-decoration: none; }
+button, input, select { font: inherit; color: inherit; }
+
+/* ---------- buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 0 14px;
+  background: var(--paper);
+  color: var(--ink);
+  border: var(--line) solid var(--ink);
+  font-family: var(--font-chrome);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 0;
+}
+.btn:active { background: var(--ink); color: var(--paper); }
+.btn-primary { background: var(--ink); color: var(--paper); }
+.btn-primary:active { background: var(--paper); color: var(--ink); }
+.btn-ghost {
+  border-color: var(--gray);
+  color: var(--ink);
+  font-weight: 500;
+}
+.btn-disabled {
+  border-color: var(--gray);
+  color: var(--gray);
+  cursor: default;
+  pointer-events: none;
+}
+.btn-tiny {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+.btn-large {
+  min-height: var(--tap-lg);
+  padding: 0 18px;
+  font-size: 15px;
+}
+.btn-page {
+  min-width: 56px;
+  font-size: 22px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* ---------- topbar ---------- */
+
+.topbar {
+  border-bottom: var(--line) solid var(--ink);
+  background: var(--paper);
+}
+.topbar-compact .topbar-row { padding: 6px 10px; }
+.topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-spacer { flex: 1; }
+.brand {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.logout-form { margin: 0; }
+.inline-form { display: inline; margin: 0; }
+
+/* ---------- library tabs (snap-scroll horizontal) ---------- */
+
+.lib-tabs {
+  border-top: 1px solid var(--ink);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  height: 38px;
+}
+.lib-tabs::-webkit-scrollbar { display: none; }
+.lib-tabs-track {
+  display: flex;
+  min-width: 100%;
+  height: 100%;
+}
+.lib-tab {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border-right: var(--line) solid var(--ink);
+  font-family: var(--font-chrome);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--paper);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.lib-tab.is-active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* ---------- library shell (fills remaining viewport, no body scroll) ---------- */
+
+.library-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--gray);
+  font-style: italic;
+}
+
+/* ---------- cover grid: locked 2x2, fills available vertical space ---------- */
+
+.cover-grid-2x2 {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+}
+
+.cover-card {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.cover-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: var(--line) solid var(--ink);
+  background: var(--paper);
+  overflow: hidden;
+  /* center the image inside the cell — letterboxes top/bottom or left/right
+     so the full cover is always visible regardless of cell aspect ratio */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cover-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.cover-title {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  padding: 0 2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* ---------- pager ---------- */
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px;
+  border-top: var(--line) solid var(--ink);
+}
+.pager-page {
+  font-family: var(--font-chrome);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ---------- series detail (fills viewport, chapter list scrolls internally) ---------- */
+
+.series-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.series-head-tight {
+  flex: 0 0 auto;
+  padding-bottom: 10px;
+  border-bottom: var(--line) solid var(--ink);
+}
+.series-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 17px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cta-row {
+  display: flex;
+  gap: 6px;
+}
+.cta-row .btn { flex: 1; }
+
+/* ---------- chapter list (fills remaining space, internal scroll) ---------- */
+
+.chapter-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.chapter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--gray);
+}
+.chapter-row.is-read .chapter-label { color: var(--gray); }
+.chapter-info { flex: 1; min-width: 0; }
+.chapter-label {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chapter-progress {
+  font-family: var(--font-chrome);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin-top: 2px;
+}
+.chapter-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chapter-actions .btn {
+  padding: 0;
+  min-height: 52px;
+  min-width: 52px;
+  font-size: 22px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* ---------- login ---------- */
+
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  border: var(--line) solid var(--ink);
+  padding: 24px 18px;
+  background: var(--paper);
+}
+.masthead { text-align: center; margin-bottom: 18px; }
+.masthead-rule { height: var(--line); background: var(--ink); }
+.masthead-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 28px;
+  margin: 10px 0 2px;
+  letter-spacing: -0.02em;
+  font-style: italic;
+}
+.masthead-sub {
+  font-family: var(--font-chrome);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin-bottom: 10px;
+}
+.login-form { display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-label {
+  font-family: var(--font-chrome);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.field input {
+  min-height: var(--tap);
+  padding: 0 12px;
+  background: var(--paper);
+  border: var(--line) solid var(--ink);
+  font-family: var(--font-display);
+  font-size: 16px;
+  width: 100%;
+  border-radius: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.field input:focus { outline: var(--line) solid var(--ink); outline-offset: 2px; }
+.login-form .btn { margin-top: 4px; width: 100%; }
+.login-foot {
+  margin-top: 16px;
+  text-align: center;
+  font-family: var(--font-chrome);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.alert {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: var(--line) solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-chrome);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ---------- error ---------- */
+
+.error-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.error-card {
+  border: var(--line) solid var(--ink);
+  padding: 24px 20px;
+  text-align: center;
+  max-width: 320px;
+}
+.error-status {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+.error-detail {
+  font-family: var(--font-chrome);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin-bottom: 18px;
+}
+
+/* ---------- kill all transitions for e-ink ---------- */
+
+*, *::before, *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ============================================================
+   Built-in reader (page-read)
+   ============================================================ */
+
+:root {
+  --reader-font-size: 18px;
+  --reader-line-height: 1.6;
+  --reader-margins: 24px;
+}
+
+.reader-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- reader chrome (top + bottom) ---------- */
+
+.reader-topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: var(--line) solid var(--ink);
+  background: var(--paper);
+}
+.reader-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#settings-btn {
+  font-size: 18px;
+  min-width: 40px;
+  padding: 0;
+}
+
+.reader-pager {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: var(--line) solid var(--ink);
+  background: var(--paper);
+}
+.page-counter {
+  font-family: var(--font-chrome);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ---------- book content (the part that respects user settings) ----------
+   Uses CSS multi-column layout for true ebook-style pagination: content
+   reflows into screen-width columns that the browser lays out side-by-side.
+   JS measures the resulting scrollWidth to know how many "screens" exist and
+   translates the inner element horizontally to advance. No line ever splits
+   across screen boundaries because the browser handles column break logic. */
+
+.reader-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 18px var(--reader-margins);
+  box-sizing: border-box;
+  /* display:flex gives .reader-inner a definite height to flex into. On older
+     Chromium-based WebViews (the kind that ship in low-cost Android e-readers
+     like the OBOOK6) plain `height: 100%` on a flex-item's descendant
+     can resolve incorrectly; flex-fill is reliable. */
+  display: flex;
+}
+
+.reader-inner {
+  /* Fill the padded area. Flex sizing handles old-Chromium quirks where
+     height:100% can't see the parent's flex-computed height. */
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  /* CSS multi-column with overflow:hidden — content past the visible column
+     flows into overflow columns to the right. JS navigates between them by
+     setting scrollLeft (see read.html). Programmatic scrollLeft works even
+     with overflow:hidden; the scrollbar just isn't visible. */
+  column-count: 1;
+  column-fill: auto;
+  column-gap: 20px;  /* MUST match COLUMN_GAP in read.html */
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+}
+
+/* Atomic blocks shouldn't split across columns. Paragraphs/lists/headings
+   deliberately CAN split (between line boxes) so the browser is free to
+   pick clean line-boundary breaks instead of falling back to a hard
+   column-edge break that would clip mid-line. */
+.reader-inner img,
+.reader-inner svg,
+.reader-inner picture,
+.reader-inner figure,
+.reader-inner video,
+.reader-inner table,
+.reader-inner blockquote,
+.reader-inner pre {
+  break-inside: avoid;
+}
+
+.reader-inner p {
+  margin: 0 0 1em;
+}
+.reader-inner h1, .reader-inner h2, .reader-inner h3,
+.reader-inner h4, .reader-inner h5, .reader-inner h6 {
+  font-family: var(--font-display);
+  line-height: 1.2;
+  margin: 1.2em 0 0.5em;
+  font-weight: 700;
+  break-after: avoid;
+}
+
+/* Media: never exceed the column they're in */
+.reader-inner img,
+.reader-inner svg,
+.reader-inner picture,
+.reader-inner figure,
+.reader-inner video,
+.reader-inner object,
+.reader-inner embed {
+  max-width: 100% !important;
+  max-height: 100% !important;
+  height: auto;
+  display: block;
+  margin: 0.6em auto;
+}
+.reader-inner figure { text-align: center; }
+.reader-inner figcaption {
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--gray);
+  margin-top: 0.3em;
+}
+.reader-inner svg:not([width]):not([viewBox]) {
+  width: 1.2em;
+  height: 1.2em;
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0;
+}
+.reader-inner p img,
+.reader-inner span img {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0;
+}
+.reader-inner pre,
+.reader-inner code {
+  font-family: var(--font-chrome);
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.reader-inner table {
+  max-width: 100%;
+  border-collapse: collapse;
+}
+.reader-inner table th,
+.reader-inner table td {
+  padding: 4px 8px;
+  border: 1px solid var(--gray);
+}
+.reader-inner blockquote {
+  margin: 1em 0;
+  padding-left: 1em;
+  border-left: 3px solid var(--gray);
+  font-style: italic;
+}
+.reader-inner a { text-decoration: underline; }
+.reader-inner hr {
+  border: none;
+  border-top: 1px solid var(--gray);
+  margin: 1.5em auto;
+  max-width: 50%;
+}
+
+/* ---------- settings panel (full-screen overlay) ---------- */
+
+.settings-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--paper);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+}
+.settings-panel[hidden] { display: none; }
+
+.settings-card {
+  width: 100%;
+  max-width: 360px;
+  border: var(--line) solid var(--ink);
+  padding: 18px 16px;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  padding-bottom: 8px;
+  border-bottom: var(--line) solid var(--ink);
+}
+
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-family: var(--font-chrome);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.settings-value {
+  font-size: 10px;
+  color: var(--gray);
+  letter-spacing: 0.08em;
+}
+
+/* Stepped slider — chunky thumb, visible track, no animation */
+.settings-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 44px;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.settings-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--ink);
+  border: none;
+}
+.settings-row input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: var(--ink);
+  border: none;
+}
+.settings-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  background: var(--paper);
+  border: var(--line) solid var(--ink);
+  border-radius: 0;
+  margin-top: -15px;
+  cursor: pointer;
+}
+.settings-row input[type="range"]::-moz-range-thumb {
+  width: 32px;
+  height: 32px;
+  background: var(--paper);
+  border: var(--line) solid var(--ink);
+  border-radius: 0;
+  cursor: pointer;
+}
+.settings-row input[type="range"]:focus { outline: none; }
+
+.settings-ticks {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px;
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+.settings-ticks span { color: var(--gray); }
+
+/* Two-button theme toggle — segmented control. .btn-primary class is
+   toggled in JS to mark the active side. */
+.settings-theme-toggle {
+  display: flex;
+  gap: 8px;
+}
+.settings-theme-toggle .btn-theme {
+  flex: 1 1 0;
+  min-height: var(--tap);
+}
+.settings-ticks:not(.settings-ticks-text) span:nth-child(1) { font-size: 11px; }
+.settings-ticks:not(.settings-ticks-text) span:nth-child(2) { font-size: 12px; }
+.settings-ticks:not(.settings-ticks-text) span:nth-child(3) { font-size: 13px; }
+.settings-ticks:not(.settings-ticks-text) span:nth-child(4) { font-size: 14px; }
+.settings-ticks:not(.settings-ticks-text) span:nth-child(5) { font-size: 16px; }
+.settings-ticks:not(.settings-ticks-text) span:nth-child(6) { font-size: 19px; }
+.settings-ticks:not(.settings-ticks-text) span:nth-child(7) { font-size: 22px; }
+.settings-ticks-text span {
+  font-family: var(--font-chrome);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#close-settings {
+  margin-top: 4px;
+  width: 100%;
+}

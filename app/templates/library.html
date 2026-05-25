@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ current_lib.name if current_lib else 'Library' }}{% endblock %}
+{% block bodyclass %}page-library{% endblock %}
+{% block content %}
+<header class="topbar topbar-compact">
+  <div class="topbar-row">
+    {% if current_lib %}
+    <span class="brand">{{ current_lib.name }}</span>
+    {% else %}
+    <span class="brand">Library</span>
+    {% endif %}
+    <div class="topbar-spacer"></div>
+    <form method="post" action="/logout" class="logout-form">
+      <button type="submit" class="btn btn-tiny btn-ghost">Sign Out</button>
+    </form>
+  </div>
+
+  {% if libraries|length > 1 %}
+  <nav class="lib-tabs" aria-label="Libraries">
+    <div class="lib-tabs-track">
+      {% for lib in libraries %}
+      <a class="lib-tab {% if current_lib and lib.id == current_lib.id %}is-active{% endif %}"
+         href="/library/{{ lib.id }}">{{ lib.name }}</a>
+      {% endfor %}
+    </div>
+  </nav>
+  {% endif %}
+</header>
+
+<main class="library-shell">
+  {% if not libraries %}
+    <p class="empty">No libraries available to your account.</p>
+  {% elif series|length == 0 %}
+    <p class="empty">This library has no series yet.</p>
+  {% else %}
+    <section class="cover-grid cover-grid-2x2" aria-label="Series in {{ current_lib.name }}">
+      {% for s in series %}
+      <a class="cover-card" href="/series/{{ s.id }}?bp={{ page }}">
+        <div class="cover-frame">
+          <img
+            src="/cover/series/{{ s.id }}"
+            alt="Cover of {{ s.name }}"
+            loading="lazy"
+            decoding="async">
+        </div>
+        <div class="cover-title">{{ s.name }}</div>
+      </a>
+      {% endfor %}
+    </section>
+
+    <nav class="pager" aria-label="Pagination">
+      {% if page > 1 %}
+      <a class="btn btn-page" href="/library/{{ current_lib.id }}?page={{ page - 1 }}" aria-label="Previous page">‹</a>
+      {% else %}
+      <span class="btn btn-page btn-disabled" aria-disabled="true">‹</span>
+      {% endif %}
+
+      <span class="pager-page">Page {{ page }}</span>
+
+      {% if has_next %}
+      <a class="btn btn-page" href="/library/{{ current_lib.id }}?page={{ page + 1 }}" aria-label="Next page">›</a>
+      {% else %}
+      <span class="btn btn-page btn-disabled" aria-disabled="true">›</span>
+      {% endif %}
+    </nav>
+  {% endif %}
+</main>
+{% endblock %}

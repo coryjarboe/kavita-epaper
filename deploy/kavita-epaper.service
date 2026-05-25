@@ -1,0 +1,33 @@
+[Unit]
+Description=kavita-epaper: e-ink web UI for Kavita
+After=network.target kavita.service
+Wants=kavita.service
+
+[Service]
+Type=simple
+User=kavita-epaper
+Group=kavita-epaper
+WorkingDirectory=/opt/kavita-epaper
+# Defaults — overridden by anything set in EnvironmentFile (the .env).
+# 0.0.0.0 binds on all interfaces so the service is reachable from your
+# reverse proxy or LAN. Override to 127.0.0.1 in .env if proxy is local-only.
+Environment="KAVITA_EPAPER_HOST=0.0.0.0"
+Environment="KAVITA_EPAPER_PORT=8095"
+EnvironmentFile=/opt/kavita-epaper/.env
+ExecStart=/opt/kavita-epaper/venv/bin/uvicorn app.main:app --host ${KAVITA_EPAPER_HOST} --port ${KAVITA_EPAPER_PORT} --proxy-headers --forwarded-allow-ips '*'
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/cache/kavita-epaper
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

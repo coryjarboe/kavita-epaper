@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}{{ info.bookTitle or info.seriesName or 'Reading' }}{% endblock %}
+{% block bodyclass %}page-read{% endblock %}
+{% block content %}
+<div class="reader-shell">
+
+  <header class="reader-topbar">
+    <a class="btn btn-tiny btn-ghost" href="/series/{{ series_id }}?bp={{ back_lib_page }}" aria-label="Back to series">‹</a>
+    <div class="reader-title" title="{{ info.bookTitle or info.seriesName }}">
+      {{ info.bookTitle or info.seriesName or 'Reading' }}
+    </div>
+    <button type="button" class="btn btn-tiny" id="settings-btn" aria-label="Reading settings">⚙</button>
+  </header>
+
+  <main class="reader-content" id="reader-content">
+    <div class="reader-inner" id="reader-inner">
+      {{ page_html | safe }}
+    </div>
+  </main>
+
+  <footer class="reader-pager">
+    <button type="button" class="btn btn-page" id="prev-btn" aria-label="Previous">‹</button>
+    <span class="page-counter" id="page-counter">…</span>
+    <button type="button" class="btn btn-page" id="next-btn" aria-label="Next">›</button>
+  </footer>
+
+  <div class="settings-panel" id="settings-panel" hidden>
+    <div class="settings-card">
+      <h2 class="settings-title">Reading Settings</h2>
+
+      <div class="settings-row">
+        <label class="settings-label" for="font-size-slider">
+          Font size <span class="settings-value" id="font-size-val"></span>
+        </label>
+        <input type="range" min="0" max="6" step="1" value="3" id="font-size-slider">
+        <div class="settings-ticks" aria-hidden="true">
+          <span>A</span><span>A</span><span>A</span><span>A</span><span>A</span><span>A</span><span>A</span>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label class="settings-label" for="line-height-slider">
+          Line spacing <span class="settings-value" id="line-height-val"></span>
+        </label>
+        <input type="range" min="0" max="4" step="1" value="2" id="line-height-slider">
+        <div class="settings-ticks settings-ticks-text" aria-hidden="true">
+          <span>tight</span><span></span><span>normal</span><span></span><span>loose</span>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label class="settings-label" for="margins-slider">
+          Margins <span class="settings-value" id="margins-val"></span>
+        </label>
+        <input type="range" min="0" max="4" step="1" value="2" id="margins-slider">
+        <div class="settings-ticks settings-ticks-text" aria-hidden="true">
+          <span>narrow</span><span></span><span>normal</span><span></span><span>wide</span>
+        </div>
+      </div>
+
+      <div class="settings-row">
+        <label class="settings-label">Theme</label>
+        <div class="settings-theme-toggle" role="group" aria-label="Theme">
+          <button type="button" class="btn btn-theme" id="theme-light-btn" data-theme="light">Light</button>
+          <button type="button" class="btn btn-theme" id="theme-dark-btn"  data-theme="dark">Dark</button>
+        </div>
+      </div>
+
+      <button type="button" class="btn btn-large" id="close-settings">Done</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  // ---- settings (font/line-height/margins) ----
+  var FONT_SIZES   = ['14px', '16px', '18px', '20px', '22px', '26px', '30px'];
+  var LINE_HEIGHTS = ['1.2', '1.4', '1.6', '1.8', '2.0'];
+  var MARGINS      = ['6px', '14px', '24px', '40px', '60px'];
+  var KEY_FS = 'ke-reader-font-size';
+  var KEY_LH = 'ke-reader-line-height';
+  var KEY_MG = 'ke-reader-margins';
+
+  function getStored(key, fallback) {
+    try { var v = localStorage.getItem(key); return v === null ? fallback : parseInt(v, 10); }
+    catch (e) { return fallback; }
+  }
+  function setStored(key, val) { try { localStorage.setItem(key, String(val)); } catch (e) {} }
+  function clamp(i, max) { return Math.max(0, Math.min(max, i | 0)); }
+
+  function applySettings() {
+    var fs = clamp(getStored(KEY_FS, 3), FONT_SIZES.length - 1);
+    var lh = clamp(getStored(KEY_LH, 2), LINE_HEIGHTS.length - 1);
+    var mg = clamp(getStored(KEY_MG, 2), MARGINS.length - 1);
+    var root = document.documentElement;
+    root.style.setProperty('--reader-font-size', FONT_SIZES[fs]);
+    root.style.setProperty('--reader-line-height', LINE_HEIGHTS[lh]);
+    root.style.setProperty('--reader-margins', MARGINS[mg]);
+    document.getElementById('font-size-slider').value = fs;
+    document.getElementById('line-height-slider').value = lh;
+    document.getElementById('margins-slider').value = mg;
+    document.getElementById('font-size-val').textContent   = (fs + 1) + '/' + FONT_SIZES.length;
+    document.getElementById('line-height-val').textContent = (lh + 1) + '/' + LINE_HEIGHTS.length;
+    document.getElementById('margins-val').textContent     = (mg + 1) + '/' + MARGINS.length;
+  }
+
+  function bindSetting(id, key) {
+    var el = document.getElementById(id);
+    el.addEventListener('input', function () {
+      setStored(key, parseInt(el.value, 10));
+      applySettings();
+      // Content layout changed — recompute screen pagination
+      requestAnimationFrame(function () { setTimeout(recalcScreens, 50); });
+    });
+  }
+
+  applySettings();
+  bindSetting('font-size-slider', KEY_FS);
+  bindSetting('line-height-slider', KEY_LH);
+  bindSetting('margins-slider', KEY_MG);
+
+  // ---- theme toggle ----
+  // Reads/writes the same 'ke-theme' key the inline script in base.html
+  // primed before render. Updates the documentElement class and the
+  // address-bar theme-color so they stay in sync.
+  var KEY_THEME = 'ke-theme';
+  function currentTheme() {
+    try { return localStorage.getItem(KEY_THEME) === 'dark' ? 'dark' : 'light'; }
+    catch (e) { return 'light'; }
+  }
+  function applyTheme(t) {
+    try { localStorage.setItem(KEY_THEME, t); } catch (e) {}
+    document.documentElement.classList.toggle('theme-dark', t === 'dark');
+    var meta = document.getElementById('meta-theme-color');
+    if (meta) meta.setAttribute('content', t === 'dark' ? '#1a1a1a' : '#000000');
+    document.getElementById('theme-light-btn').classList.toggle('btn-primary', t === 'light');
+    document.getElementById('theme-dark-btn').classList.toggle('btn-primary',  t === 'dark');
+  }
+  document.getElementById('theme-light-btn').addEventListener('click', function () { applyTheme('light'); });
+  document.getElementById('theme-dark-btn').addEventListener('click',  function () { applyTheme('dark');  });
+  applyTheme(currentTheme());
+
+  var panel = document.getElementById('settings-panel');
+  document.getElementById('settings-btn').addEventListener('click', function () { panel.hidden = false; });
+  document.getElementById('close-settings').addEventListener('click', function () { panel.hidden = true; });
+
+  // ---- screen pagination via CSS multi-column layout ----
+  // .reader-inner has column-count:1, column-gap:20px, overflow:hidden in CSS.
+  // Content that doesn't fit in the visible column flows into overflow columns
+  // off to the right. We navigate between them with element.scrollLeft (NOT
+  // transform: translateX) — this is what Kavita does. The browser's scroll
+  // engine snaps to the column boundaries it laid out, so we don't have to
+  // recompute them in JS. No more subpixel drift / edge bleed between columns.
+  //
+  // pageStep = clientWidth + COLUMN_GAP, because the browser places columns at
+  //   col1: 0..W, col2: W+G..2W+G, col3: 2W+2G..3W+2G, ...
+  // so the scroll step between page starts is W + G.
+  var COLUMN_GAP = 20;  // px — MUST match column-gap in .reader-inner CSS
+
+  var content = document.getElementById('reader-content');
+  var inner   = document.getElementById('reader-inner');
+  var prevBtn = document.getElementById('prev-btn');
+  var nextBtn = document.getElementById('next-btn');
+  var counter = document.getElementById('page-counter');
+
+  var CHAPTER_ID    = {{ chapter_id }};
+  var SERVER_PAGE   = {{ page }};
+  var TOTAL_PAGES   = {{ total_pages }};
+  var BACK_LIB_PAGE = {{ back_lib_page }};
+
+  var currentScreen = 0;
+  var totalScreens = 1;
+  var pageStep = 0;  // scroll distance per virtual page (column width + gap)
+
+  function setupColumns() {
+    // CSS owns column-count / column-fill / column-gap / overflow. JS only
+    // touches scroll position now. Resetting to 0 lets recalcScreens() measure
+    // a fresh scrollWidth without being confused by prior position.
+    inner.scrollLeft = 0;
+    pageStep = inner.clientWidth + COLUMN_GAP;
+  }
+
+  function recalcScreens() {
+    setupColumns();
+    // scrollWidth includes overflow columns even when overflow:hidden is set,
+    // so it gives the full span of all virtual columns.
+    var totalWidth = inner.scrollWidth;
+    totalScreens = Math.max(1, Math.ceil(totalWidth / pageStep));
+    currentScreen = Math.min(currentScreen, totalScreens - 1);
+    snapToScreen(false);
+    updateUi();
+  }
+
+  function snapToScreen(animate) {
+    // No transition — e-ink renders animated scrolls as a smear. Native
+    // scrollLeft assignment lands at integer-pixel positions that align with
+    // the column boundaries the browser itself laid out.
+    inner.scrollLeft = currentScreen * pageStep;
+  }
+
+  function updateUi() {
+    counter.textContent = (currentScreen + 1) + ' / ' + totalScreens;
+    var atStart = currentScreen === 0 && SERVER_PAGE === 1;
+    var atEnd = currentScreen >= totalScreens - 1 && SERVER_PAGE >= TOTAL_PAGES;
+    prevBtn.classList.toggle('btn-disabled', atStart);
+    nextBtn.classList.toggle('btn-disabled', atEnd);
+    prevBtn.disabled = atStart;
+    nextBtn.disabled = atEnd;
+  }
+
+  function navTo(page, screenHint) {
+    var url = '/read/' + CHAPTER_ID + '?page=' + page + '&bp=' + BACK_LIB_PAGE;
+    if (screenHint) url += '&screen=' + screenHint;
+    window.location.href = url;
+  }
+
+  prevBtn.addEventListener('click', function () {
+    if (currentScreen > 0) {
+      currentScreen--;
+      snapToScreen(false);  // no animation on e-ink
+      updateUi();
+    } else if (SERVER_PAGE > 1) {
+      navTo(SERVER_PAGE - 1, 'last');
+    }
+  });
+
+  nextBtn.addEventListener('click', function () {
+    if (currentScreen < totalScreens - 1) {
+      currentScreen++;
+      snapToScreen(false);
+      updateUi();
+    } else if (SERVER_PAGE < TOTAL_PAGES) {
+      navTo(SERVER_PAGE + 1);
+    }
+  });
+
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+  var urlParams = new URL(window.location.href).searchParams;
+  var startAtLast = urlParams.get('screen') === 'last';
+
+  function initialize() {
+    recalcScreens();
+    if (startAtLast) {
+      currentScreen = totalScreens - 1;
+      snapToScreen(false);
+      updateUi();
+    }
+  }
+
+  // Two rAFs + small timeout so fonts/images settle before measuring
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      setTimeout(initialize, 100);
+    });
+  });
+
+  // Web fonts (Newsreader) arrive asynchronously. Once they apply, line
+  // metrics shift and the initial column count is wrong — recalc again.
+  if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+    document.fonts.ready.then(function () { setTimeout(recalcScreens, 50); });
+  }
+
+  // Recompute on resize (orientation, fullscreen toggle, font load)
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(recalcScreens, 150);
+  });
+
+  // Recompute when images finish loading (they affect content layout)
+  var imgs = inner.querySelectorAll('img');
+  for (var i = 0; i < imgs.length; i++) {
+    if (!imgs[i].complete) {
+      imgs[i].addEventListener('load', recalcScreens);
+      imgs[i].addEventListener('error', recalcScreens);
+    }
+  }
+})();
+</script>
+{% endblock %}

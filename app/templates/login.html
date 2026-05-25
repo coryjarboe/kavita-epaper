@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Sign In{% endblock %}
+{% block bodyclass %}page-login{% endblock %}
+{% block content %}
+<main class="login-shell">
+  <div class="login-card">
+    <div class="masthead">
+      <div class="masthead-rule"></div>
+      <h1 class="masthead-title">The Library</h1>
+      <div class="masthead-sub">— private edition —</div>
+      <div class="masthead-rule"></div>
+    </div>
+
+    {% if error %}
+    <div class="alert" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="login-form" autocomplete="on">
+      <label class="field">
+        <span class="field-label">Username</span>
+        <input
+          type="text"
+          name="username"
+          required
+          autocomplete="username"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          inputmode="email"
+        >
+      </label>
+
+      <label class="field">
+        <span class="field-label">Password</span>
+        <input
+          type="password"
+          name="password"
+          required
+          autocomplete="current-password"
+        >
+      </label>
+
+      <button type="submit" class="btn btn-primary">Sign In</button>
+    </form>
+
+    <div class="login-foot">Kavita reader · e-ink edition</div>
+  </div>
+</main>
+{% endblock %}

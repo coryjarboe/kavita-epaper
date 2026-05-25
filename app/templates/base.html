@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000" id="meta-theme-color">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // Apply saved theme synchronously, before stylesheet load, to avoid the
+    // light→dark flash on cold loads. Mirrors KEY_THEME used in read.html.
+    (function () {
+      try {
+        var t = localStorage.getItem('ke-theme');
+        if (t === 'dark') {
+          document.documentElement.classList.add('theme-dark');
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.setAttribute('content', '#1a1a1a');
+        }
+      } catch (e) { /* localStorage unavailable — fall back to light */ }
+    })();
+  </script>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Library">
+  <link rel="manifest" href="/manifest.json?v={{ APP_VERSION }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <title>{% block title %}Library{% endblock %} — Kavita</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,700;1,6..72,400&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v={{ APP_VERSION }}">
+</head>
+<body class="{% block bodyclass %}{% endblock %}">
+  {% block content %}{% endblock %}
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js?v={{ APP_VERSION }}').catch(function (e) {
+          console.warn('SW registration failed:', e);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
