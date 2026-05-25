@@ -205,17 +205,20 @@ persists correctly.
 
 Four ways to invoke `update.sh`:
 
-```bash
 # 1. Explicit tarball path
+```bash
 sudo /opt/kavita-epaper/update.sh /path/to/kavita-epaper-vX.Y.Z.tar.gz
-
+```
 # 2. URL (auto-downloads)
+```bash
 sudo /opt/kavita-epaper/update.sh https://my.server/kavita-epaper-vX.Y.Z.tar.gz
-
+```
 # 3. Auto-pick newest from a release directory
+```bash
 sudo /opt/kavita-epaper/update.sh
-
+```
 # 4. Latest release from the GitHub repo
+```bash
 sudo /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 ```
 
