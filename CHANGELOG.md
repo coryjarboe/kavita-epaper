@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.11] — remove unused KAVITA_PUBLIC_URL
+
+### Removed
+- `KAVITA_PUBLIC_URL` env var — was defined and the `reader_url` helper
+  in `main.py` constructed "Open in Kavita" links from it, but no
+  template actually rendered those links. Dead config. Removed
+  alongside the `reader_url` helper and the `_reader_kind_for_format`
+  function that only the helper called.
+- Corresponding entry from `env.example` and the README config table.
+
+### Changed
+- Install-section note updated: only `KAVITA_BASE_URL` is documented as
+  user-configurable now.
+
+### Notes
+- Pure code reduction. `update.sh` is sufficient to apply.
+- If you'd set `KAVITA_PUBLIC_URL=...` in your `.env`, it's now ignored.
+  Safe to remove from `.env` to keep things clean.
+- If you eventually want "Open in Kavita" links in series view, that's a
+  feature to re-add deliberately, with the variable re-introduced for a
+  real purpose.
+
 ## [0.7.10] — fix incorrect device attribution
 
 ### Fixed

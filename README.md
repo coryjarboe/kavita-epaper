@@ -52,9 +52,9 @@ quirks you hit.
        5. (Optional) Photo of the UI rendered on an actual e-reader (OBOOK6 or similar)
      Host them under docs/screenshots/ in the repo and reference like below. -->
 
-| Library | Reader | Settings | Dark mode |
-|---------|--------|----------|-----------|
-| ![Library](docs/screenshots/library.png) | ![Reader](docs/screenshots/reader.png) | ![Settings](docs/screenshots/settings.png) | ![Dark mode](docs/screenshots/reader-dark.png) |
+| Library | Reader | Dark mode |
+|---------|--------|-----------|
+| ![Library](docs/screenshots/library.png) | ![Reader](docs/screenshots/reader.png) | ![Dark mode](docs/screenshots/reader-dark.png) |
 
 ## Features
 
@@ -89,7 +89,6 @@ quirks you hit.
 > Upgrading from a previous release? See [`CHANGELOG.md`](./CHANGELOG.md)
 > for version-specific notes, including the rename from `kavita-boox` and
 > the 0.7.1 → 0.7.2 systemd unit change.
-
 
 ## Install
 
@@ -135,16 +134,19 @@ sudo ./deploy/install.sh
 Use this for offline installs, air-gapped environments, or when you want
 a specific pinned version.
 
-Install creates:
+This creates:
 
 - `/opt/kavita-epaper/` — code + venv
 - `/opt/kavita-epaper/.env` — config (auto-generated session secret, edit to
   point at your Kavita)
-- `/opt/kavita-epaper/update.sh` — for future updates (see below)
 - `/var/cache/kavita-epaper/covers/` — grayscale cover cache
+- `/var/lib/kavita-epaper/releases/` — drop release tarballs here for no-args `update.sh`
 - `kavita-epaper` system user
-- `kavita-epaper.service` — listens on `0.0.0.0:8095`
+- `kavita-epaper.service`
 
+The defaults assume Kavita is on the same host. If Kavita lives on a
+different machine, edit `KAVITA_BASE_URL` in `/opt/kavita-epaper/.env`
+to point at it (e.g. `http://10.0.0.50:5000`). Then:
 
 ```bash
 sudo systemctl restart kavita-epaper
@@ -205,20 +207,17 @@ persists correctly.
 
 Four ways to invoke `update.sh`:
 
- 1. Explicit tarball path
 ```bash
+# 1. Explicit tarball path
 sudo /opt/kavita-epaper/update.sh /path/to/kavita-epaper-vX.Y.Z.tar.gz
-```
- 2. URL (auto-downloads)
-```bash
+
+# 2. URL (auto-downloads)
 sudo /opt/kavita-epaper/update.sh https://my.server/kavita-epaper-vX.Y.Z.tar.gz
-```
- 3. Auto-pick newest from a release directory
-```bash
+
+# 3. Auto-pick newest from a release directory
 sudo /opt/kavita-epaper/update.sh
-```
- 4. Latest release from the GitHub repo
-```bash
+
+# 4. Latest release from a GitHub repo
 sudo /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 ```
 
@@ -234,7 +233,7 @@ and use `sudo -E`:
 
 ```bash
 export GITHUB_TOKEN=ghp_...
-sudo -E /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
+sudo -E /opt/kavita-epaper/update.sh --github your-org/kavita-epaper
 ```
 
 All four modes preserve `.env` and the cover cache, skip `pip install`
@@ -247,8 +246,7 @@ up before exiting non-zero.
 
 | Variable                     | Default                         | Notes                                                |
 |------------------------------|---------------------------------|------------------------------------------------------|
-| `KAVITA_BASE_URL`            | `http://127.0.0.1:5000`         | Where the Kavita API lives (server-to-server).       |
-| `KAVITA_PUBLIC_URL`          | `https://kavita.example.com`        | URL the browser uses for "Open in Kavita" links.     |
+| `KAVITA_BASE_URL`            | `http://127.0.0.1:5000`         | Kavita API address (server-to-server). Change if Kavita isn't local. |
 | `KAVITA_EPAPER_HOST`         | `0.0.0.0`                       | Interface to bind. `127.0.0.1` = loopback only.      |
 | `KAVITA_EPAPER_PORT`         | `8095`                          | TCP port to listen on.                               |
 | `KAVITA_EPAPER_SECRET`       | auto-generated                  | Signs session cookies. Don't change after install.   |

@@ -30,10 +30,6 @@ from itsdangerous import URLSafeSerializer
 # ----- config ---------------------------------------------------------------
 
 KAVITA_BASE_URL = os.environ.get("KAVITA_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
-# Publicly-resolvable Kavita URL used when constructing links the browser
-# follows (e.g. opening Kavita's built-in reader). Defaults to KAVITA_BASE_URL
-# which is only useful for testing on the same host.
-KAVITA_PUBLIC_URL = os.environ.get("KAVITA_PUBLIC_URL", KAVITA_BASE_URL).rstrip("/")
 SECRET_KEY = os.environ.get("KAVITA_EPAPER_SECRET", "")
 COOKIE_NAME = os.environ.get("KAVITA_EPAPER_COOKIE", "kesess")
 # Cookie 'Secure' attribute control. Tri-state:
@@ -428,15 +424,6 @@ async def series_view(
     items = all_items[ch_start : ch_start + ch_page_size]
     ch_has_next = (ch_start + ch_page_size) < len(all_items)
 
-    # Helper passed to the template for building Kavita reader URLs.
-    reader_kind = _reader_kind_for_format(series.get("format", 2))
-
-    def reader_url(chapter_id: int) -> str:
-        return (
-            f"{KAVITA_PUBLIC_URL}/library/{series.get('libraryId')}"
-            f"/series/{series_id}/{reader_kind}/{chapter_id}"
-        )
-
     resp = templates.TemplateResponse(
         "series.html",
         {
@@ -445,7 +432,6 @@ async def series_view(
             "detail": detail,
             "items": items,
             "username": session.username,
-            "reader_url": reader_url,
             "chapter_page": chapter_page,
             "ch_has_next": ch_has_next,
             "ch_total": len(all_items),
@@ -834,23 +820,6 @@ def _chapter_label(ch: dict) -> str:
     if n:
         return f"Chapter {n}"
     return "Chapter"
-
-
-def _reader_kind_for_format(fmt: int) -> str:
-    """Map MangaFormat enum to Kavita's reader URL segment.
-
-    MangaFormat: 0=Image, 1=Archive, 2=Unknown, 3=Epub, 4=Pdf
-    Reader routes (from app-routing.module.ts):
-      EPUB → /book/   PDF → /pdf/   Image/Archive → /manga/
-    Unknown defaults to book reader (text-only content).
-    """
-    if fmt == 3:
-        return "book"
-    if fmt == 4:
-        return "pdf"
-    if fmt in (0, 1):
-        return "manga"
-    return "book"
 
 
 def _decode_book_page(resp) -> str:
