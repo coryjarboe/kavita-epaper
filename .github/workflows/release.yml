@@ -1,0 +1,46 @@
+# Place at .github/workflows/release.yml in the repo root.
+#
+# Trigger: pushing a tag of the form v*.*.* (e.g. v0.7.3) creates a GitHub
+# Release with a kavita-epaper-vX.Y.Z.tar.gz attached, matching the layout
+# install.sh / update.sh expect.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to create GitHub Releases
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches VERSION file
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          FILE_VERSION="$(cat VERSION)"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "Tag v${TAG_VERSION} doesn't match VERSION file (${FILE_VERSION})." >&2
+            echo "Bump VERSION before tagging, or retag after correcting." >&2
+            exit 1
+          fi
+          echo "VERSION=$FILE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Build release tarball
+        run: |
+          OUT="/tmp/kavita-epaper-v${VERSION}.tar.gz"
+          tar -czf "$OUT" --owner=0 --group=0 \
+            ./.gitignore ./CHANGELOG.md ./LICENSE ./README.md ./VERSION ./requirements.txt ./deploy ./app
+          sha256sum "$OUT"
+          echo "TARBALL=$OUT" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.TARBALL }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
