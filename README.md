@@ -135,7 +135,7 @@ sudo ./deploy/install.sh
 Use this for offline installs, air-gapped environments, or when you want
 a specific pinned version.
 
-This creates:
+Install creates:
 
 - `/opt/kavita-epaper/` — code + venv
 - `/opt/kavita-epaper/.env` — config (auto-generated session secret, edit to
