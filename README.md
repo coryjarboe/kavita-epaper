@@ -90,16 +90,15 @@ quirks you hit.
 > for version-specific notes, including the rename from `kavita-boox` and
 > the 0.7.1 → 0.7.2 systemd unit change.
 
+
 ## Install
 
 Pick whichever path fits how you got the code.
 
 ### Option A: latest release from GitHub (recommended)
 
-​
-# Resolve the latest release tarball URL via the GitHub API, download, extract, install
-
 ```bash
+# Resolve the latest release tarball URL via the GitHub API, download, extract, install
 LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
   | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*kavita-epaper-v[0-9][^"]*\.tar\.gz"' \
   | head -1 | grep -oE 'https://[^"]+')
@@ -107,30 +106,31 @@ mkdir -p /tmp/kavita-epaper
 curl -fsSL "$LATEST" | tar -xzf - -C /tmp/kavita-epaper
 cd /tmp/kavita-epaper
 sudo ./deploy/install.sh
-​```
+```
 
-This pulls the latest tagged release.
+This pulls the latest tagged release, which is the version most users want.
+
 ### Option B: clone the repo (gets the latest `main`, may be ahead of releases)
 
 Requires `git`.
 
-​```bash
+```bash
 git clone https://github.com/coryjarboe/kavita-epaper.git
 cd kavita-epaper
 sudo ./deploy/install.sh
-​```
+```
 
 Use this if you want the absolute latest changes between releases, or if
 you plan to modify the code locally.
 
 ### Option C: from a tarball you already have
 
-​```bash
+```bash
 mkdir -p /tmp/kavita-epaper
 tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C /tmp/kavita-epaper
 cd /tmp/kavita-epaper
 sudo ./deploy/install.sh
-​```
+```
 
 Use this for offline installs, air-gapped environments, or when you want
 a specific pinned version.
@@ -143,10 +143,8 @@ This creates:
 - `/opt/kavita-epaper/update.sh` — for future updates (see below)
 - `/var/cache/kavita-epaper/covers/` — grayscale cover cache
 - `kavita-epaper` system user
-- `kavita-epaper.service` — listens on `127.0.0.1:8095`
+- `kavita-epaper.service` — listens on `0.0.0.0:8095`
 
-Edit `/opt/kavita-epaper/.env` to set `KAVITA_BASE_URL` and `KAVITA_PUBLIC_URL`
-if Kavita isn't on `127.0.0.1:5000`, then:
 
 ```bash
 sudo systemctl restart kavita-epaper
