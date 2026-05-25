@@ -92,12 +92,46 @@ quirks you hit.
 
 ## Install
 
-```bash
+Pick whichever path fits how you got the code.
+
+### Option A: latest release from GitHub (recommended)
+
+​```bash
+# Resolve the latest release tarball URL via the GitHub API, download, extract, install
+LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
+  | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*kavita-epaper-v[0-9][^"]*\.tar\.gz"' \
+  | head -1 | grep -oE 'https://[^"]+')
+mkdir -p /tmp/kavita-epaper
+curl -fsSL "$LATEST" | tar -xzf - -C /tmp/kavita-epaper
+cd /tmp/kavita-epaper
+sudo ./deploy/install.sh
+​```
+
+This pulls the latest tagged release.
+### Option B: clone the repo (gets the latest `main`, may be ahead of releases)
+
+Requires `git`.
+
+​```bash
+git clone https://github.com/coryjarboe/kavita-epaper.git
+cd kavita-epaper
+sudo ./deploy/install.sh
+​```
+
+Use this if you want the absolute latest changes between releases, or if
+you plan to modify the code locally.
+
+### Option C: from a tarball you already have
+
+​```bash
 mkdir -p /tmp/kavita-epaper
 tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C /tmp/kavita-epaper
 cd /tmp/kavita-epaper
 sudo ./deploy/install.sh
-```
+​```
+
+Use this for offline installs, air-gapped environments, or when you want
+a specific pinned version.
 
 This creates:
 
@@ -181,8 +215,8 @@ sudo /opt/kavita-epaper/update.sh https://my.server/kavita-epaper-vX.Y.Z.tar.gz
 # 3. Auto-pick newest from a release directory
 sudo /opt/kavita-epaper/update.sh
 
-# 4. Latest release from a GitHub repo
-sudo /opt/kavita-epaper/update.sh --github youruser/kavita-epaper
+# 4. Latest release from the GitHub repo
+sudo /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 ```
 
 For (3), the script picks the highest-versioned `kavita-epaper-*.tar.gz`
@@ -197,7 +231,7 @@ and use `sudo -E`:
 
 ```bash
 export GITHUB_TOKEN=ghp_...
-sudo -E /opt/kavita-epaper/update.sh --github your-org/kavita-epaper
+sudo -E /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 ```
 
 All four modes preserve `.env` and the cover cache, skip `pip install`
