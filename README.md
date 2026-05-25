@@ -52,9 +52,9 @@ quirks you hit.
        5. (Optional) Photo of the UI rendered on an actual e-reader (OBOOK6 or similar)
      Host them under docs/screenshots/ in the repo and reference like below. -->
 
-| Library | Reader | Dark mode |
-|---------|--------|-----------|
-| ![Library](docs/screenshots/library.png) | ![Reader](docs/screenshots/reader.png) | ![Dark mode](docs/screenshots/reader-dark.png) |
+| Library | Reader | Settings | Dark mode |
+|---------|--------|----------|-----------|
+| ![Library](docs/screenshots/library.png) | ![Reader](docs/screenshots/reader.png) | ![Settings](docs/screenshots/settings.png) | ![Dark mode](docs/screenshots/reader-dark.png) |
 
 ## Features
 
