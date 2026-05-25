@@ -96,8 +96,10 @@ Pick whichever path fits how you got the code.
 
 ### Option A: latest release from GitHub (recommended)
 
-​```bash
+​
 # Resolve the latest release tarball URL via the GitHub API, download, extract, install
+
+```bash
 LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
   | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*kavita-epaper-v[0-9][^"]*\.tar\.gz"' \
   | head -1 | grep -oE 'https://[^"]+')
