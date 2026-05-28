@@ -424,6 +424,12 @@ async def series_view(
     items = all_items[ch_start : ch_start + ch_page_size]
     ch_has_next = (ch_start + ch_page_size) < len(all_items)
 
+    # Series format from Kavita's MangaFormat enum:
+    #   0=Image, 1=Archive, 2=Unknown, 3=Epub, 4=Pdf
+    # The built-in reader only handles EPUB. For everything else, hide the
+    # read button — users can still download the file or open in Kavita.
+    is_epub = series.get("format") == 3
+
     resp = templates.TemplateResponse(
         "series.html",
         {
@@ -431,6 +437,7 @@ async def series_view(
             "series": series,
             "detail": detail,
             "items": items,
+            "is_epub": is_epub,
             "username": session.username,
             "chapter_page": chapter_page,
             "ch_has_next": ch_has_next,

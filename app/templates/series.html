@@ -31,7 +31,9 @@
         {% endif %}
       </div>
       <div class="chapter-actions">
+        {% if is_epub %}
         <a class="btn btn-tiny" href="/read/{{ item.id }}?bp={{ back_lib_page }}">▶</a>
+        {% endif %}
         <a class="btn btn-tiny" href="/download/chapter/{{ item.id }}" download>↓</a>
       </div>
     </div>

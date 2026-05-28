@@ -62,10 +62,13 @@ if [ "$SOURCE" = "--github" ]; then
   # Extract the kavita-epaper-*.tar.gz asset URL from the JSON response.
   # GitHub returns pretty-printed JSON with one field per line, so a simple
   # grep over browser_download_url entries is sufficient — no jq dependency.
+  # `|| true` is critical: under set -euo pipefail, a grep with no matches
+  # makes the pipeline return non-zero, which would otherwise kill the script
+  # silently before we reach the empty-SOURCE check below.
   SOURCE=$(printf '%s' "$RESP" \
     | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*kavita-epaper-v[0-9][^"]*\.tar\.gz"' \
     | head -1 \
-    | grep -oE 'https://[^"]+')
+    | grep -oE 'https://[^"]+' || true)
 
   if [ -z "$SOURCE" ]; then
     echo "[✗] latest release has no kavita-epaper-v*.tar.gz asset attached" >&2

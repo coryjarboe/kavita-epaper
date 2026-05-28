@@ -4,6 +4,38 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.13] — EPUB-only scope made explicit
+
+### Added
+- Reader button (▶) on series detail is now only shown for EPUB items.
+  For comics, PDFs, raw images, and any other Kavita-supported format,
+  only the download button (↓) is shown. Library browse still works for
+  all formats. Decided not to build a manga/comic reader inside
+  kavita-epaper: Kavita already has a polished one, duplicating it for
+  a Boox-class device that handles manga poorly isn't worth the code.
+
+### Changed
+- README rewritten for voice and clarity. EPUB-only scope is now
+  documented up front and in "What this isn't" rather than implied.
+  Em-dashes removed throughout.
+
+## [0.7.12] — fix silent failure in `update.sh --github`
+
+### Fixed
+- `update.sh --github` could exit silently with no error message if the
+  release lookup didn't find a matching asset. Root cause: the pipeline
+  inside the `SOURCE=$(...)` assignment returned non-zero (grep finds
+  no match), which under `set -euo pipefail` killed the script before
+  the "no asset found" check could fire. Added `|| true` so the empty
+  string falls into the proper check.
+
+### Notes
+- This was the bug behind reports of `update.sh --github coryjarboe/...`
+  returning to the prompt immediately after "querying ..." with no
+  output.
+- Pure shell fix. Safe to apply via `update.sh` itself once you've
+  worked around the bug to update.
+
 ## [0.7.11] — remove unused KAVITA_PUBLIC_URL
 
 ### Removed
