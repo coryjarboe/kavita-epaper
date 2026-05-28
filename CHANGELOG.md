@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.14] — fix EPUB image rendering
+
+### Fixed
+- Images embedded in EPUBs (illustrations, diagrams, chapter art) showed
+  as broken-image icons in the reader. Kavita's BookService emits
+  resource URLs as `//{host}{pathbase}/api/book/{id}/book-resources?file=...`
+  (protocol-relative, includes the host). The previous URL-rewriting
+  regex only matched `/api/Book/{id}/book-resources` as a path,
+  leaving the `//host` prefix intact. Result: the browser made the
+  request against the Kavita host directly with no valid apiKey and
+  got a 401/404, rendering as a broken image. The regex now strips
+  the full host-prefixed URL so resources load from kavita-epaper's
+  own `/read-resource/{id}` endpoint.
+
+### Notes
+- Affects every EPUB with embedded images. Verified against eight
+  representative URL patterns including subpath-deployed Kavita
+  instances and CSS `background: url(...)` references.
+- Pure app code change. `update.sh` is sufficient to apply.
+
 ## [0.7.13] — EPUB-only scope made explicit
 
 ### Added

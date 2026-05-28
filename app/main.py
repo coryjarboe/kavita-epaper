@@ -573,7 +573,11 @@ async def read_resource(
     session: Session = Depends(require_auth),
 ):
     """Proxy a resource (image, font, CSS) embedded in the EPUB. Keeps the
-    apiKey server-side and serves on our origin so book HTML stays same-origin."""
+    apiKey server-side and serves on our origin so book HTML stays same-origin.
+
+    Image resources go through the same grayscale conversion as covers (gated
+    on KAVITA_EPAPER_GRAYSCALE). CSS and font resources pass through unchanged
+    since they're not image data."""
     r = await _kavita_request(
         "GET",
         f"/api/Book/{chapter_id}/book-resources",
@@ -582,9 +586,13 @@ async def read_resource(
     )
     if r.status_code != 200:
         raise HTTPException(r.status_code, "resource not found")
+
+    ctype = r.headers.get("content-type", "application/octet-stream")
+    data, ctype = _to_grayscale(r.content, ctype)
+
     return Response(
-        content=r.content,
-        media_type=r.headers.get("content-type", "application/octet-stream"),
+        content=data,
+        media_type=ctype,
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -861,17 +869,61 @@ def _rewrite_book_resources(html: str, chapter_id: int) -> str:
     proxy, so resources load from kavita-epaper's origin (keeping the page
     same-origin and the apiKey server-side).
 
-    Matches any /api/Book/<id>/book-resources URL (not just the current
-    chapter's — Kavita sometimes references resources from other chapters in
-    the same book). Captures the chapter id and preserves it in the rewrite.
-    Case-insensitive. Leaves the query string (?file=X&apiKey=Y) intact.
+    Kavita's BookController constructs URLs as:
+        //{Host}{PathBase}/api/book/{chapterId}/book-resources?file=...
+    (see Kavita API/Controllers/BookController.cs GetBookPage and
+    API/Services/BookService.cs line ~1108).
+
+    So we have to strip the protocol-relative host prefix too, not just the
+    /api/book/... path portion. Otherwise the rewritten URL still points at
+    the Kavita host directly, which 404s (no valid apiKey) and shows as a
+    broken-image icon in the reader.
+
+    Matches any chapter id (Kavita sometimes references resources from other
+    chapters in the same book). Case-insensitive. Preserves the query string
+    so file= and any apiKey stay intact for the resource fetch.
     """
     import re
 
+    # Capture group 1: the chapter id. Drop everything from `//...` through
+    # `/api/book/{id}/book-resources` and replace with `/read-resource/{id}`.
+    # The (?:...) host segment is non-capturing.
     pattern = re.compile(
-        r"/api/Book/(\d+)/book-resources", re.IGNORECASE
+        r"(?://[^/\s\"']+)?(?:/[^/\s\"']*)*?/api/book/(\d+)/book-resources",
+        re.IGNORECASE,
     )
     return pattern.sub(r"/read-resource/\1", html)
+
+
+def _to_grayscale(data: bytes, content_type: str) -> tuple[bytes, str]:
+    """Convert image bytes to grayscale JPEG. Returns (new_data, new_content_type).
+
+    No-ops (returns the input unchanged) when:
+      - Pillow isn't installed (HAS_PIL is False),
+      - GRAYSCALE_COVERS is disabled,
+      - content_type isn't an image type,
+      - content_type is SVG (Pillow can't process XML; browsers will render
+        SVG using CSS color rules and the e-ink display will dither it),
+      - the conversion raises any exception (broken image, unsupported codec).
+
+    Centralizes the grayscale logic so /cover/* and /read-resource/* behave
+    identically and don't drift apart over time.
+    """
+    if not GRAYSCALE_COVERS or not HAS_PIL:
+        return data, content_type
+    if not content_type.startswith("image/"):
+        return data, content_type
+    if "svg" in content_type.lower():
+        return data, content_type
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = img.convert("L")  # 8-bit grayscale
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=78, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception as e:  # noqa: BLE001
+        logger.warning("grayscale convert failed: %s", e)
+        return data, content_type
 
 
 async def _serve_cover(
@@ -909,18 +961,7 @@ async def _serve_cover(
         )
 
     ctype = r.headers.get("content-type", "image/jpeg")
-    data = r.content
-
-    if GRAYSCALE_COVERS and HAS_PIL and ctype.startswith("image/"):
-        try:
-            img = Image.open(io.BytesIO(data))
-            img = img.convert("L")  # 8-bit grayscale
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=78, optimize=True)
-            data = buf.getvalue()
-            ctype = "image/jpeg"
-        except Exception as e:  # noqa: BLE001
-            logger.warning("grayscale convert failed for %s: %s", cache_key, e)
+    data, ctype = _to_grayscale(r.content, ctype)
 
     try:
         with open(cached, "wb") as f:
