@@ -225,7 +225,7 @@ sudo systemctl daemon-reload
 ├── venv/                 # Python virtualenv
 ├── requirements.txt
 ├── VERSION
-├── .env                  # config (chmod 600)
+├── .env                  # config (root:root, chmod 600)
 └── update.sh             # dropped in by install.sh
 ```
 

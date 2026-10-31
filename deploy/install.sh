@@ -76,19 +76,24 @@ if [ ! -f "${ENV_FILE}" ]; then
   # generate a real secret
   SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
   sed -i "s|CHANGE_ME_TO_A_LONG_RANDOM_STRING|${SECRET}|" "${ENV_FILE}"
-  chmod 600 "${ENV_FILE}"
 fi
-chown "${SERVICE_USER}:${SERVICE_USER}" "${ENV_FILE}"
 
-# 7) systemd unit
+# 7) ownership: everything under the install dir belongs to root.
+# update.sh runs as root and executes files from here (venv/bin/pip, the
+# script itself), so anything the service user can write here is a path
+# to root. The service only needs to read code and the venv; it never
+# opens .env itself (systemd reads EnvironmentFile= as root before
+# dropping to User=), so .env is root-only.
+chown -R root:root "${INSTALL_DIR}"
+chmod -R go-w "${INSTALL_DIR}"
+chmod 600 "${ENV_FILE}"
+
+# 8) systemd unit
 echo "[+] installing systemd unit"
 cp "${SCRIPT_DIR}/kavita-epaper.service" "${SVC_FILE}"
 systemctl daemon-reload
 systemctl enable kavita-epaper.service >/dev/null
 systemctl restart kavita-epaper.service
-
-# 8) ownership of install dir
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${INSTALL_DIR}"
 
 echo
 echo "[✓] kavita-epaper installed."

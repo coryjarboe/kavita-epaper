@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.15] - root-owned install dir
+
+### Security
+- `install.sh` left `/opt/kavita-epaper` (including `.env`, `update.sh`
+  and `venv/`) owned by the `kavita-epaper` service user. `update.sh` runs
+  as root, sources `.env` and runs `venv/bin/pip`, so anyone with code
+  execution as the service user could get root the next time an admin
+  ran an update. The install dir is now `root:root` and not group/world
+  writable, and `.env` is `root:root 600`. The service still reads its
+  config, because systemd loads `EnvironmentFile=` as root before
+  dropping privileges.
+- `update.sh` no longer sources `.env`. It reads
+  `KAVITA_EPAPER_RELEASES_DIR` with a plain text match, so nothing in
+  `.env` is ever executed.
+- `update.sh` re-applies the ownership on every run, so existing installs
+  are corrected by their next update.
+
+### Notes
+- The `update.sh` already installed on a pre-0.7.15 host is the old one,
+  and it still sources `.env` during the update that installs the fix.
+  Fix ownership by hand first; see README, "Migration".
+
 ## [0.7.14] - fix EPUB image rendering
 
 ### Fixed

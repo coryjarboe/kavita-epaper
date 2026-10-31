@@ -17,7 +17,6 @@
 set -euo pipefail
 
 INSTALL_DIR="/opt/kavita-epaper"
-SERVICE_USER="kavita-epaper"
 SVC_NAME="kavita-epaper.service"
 DEFAULT_RELEASES_DIR="/var/lib/kavita-epaper/releases"
 
@@ -26,9 +25,23 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-if [ -f "$INSTALL_DIR/.env" ]; then
-  set -a; . "$INSTALL_DIR/.env"; set +a
-fi
+# Ownership hardening. This script runs as root and executes files from
+# INSTALL_DIR (venv/bin/pip, and itself on the next run). Installs before
+# 0.7.15 left all of it owned by the service user, which made a compromise
+# of that account a path to root. Normalize on every run.
+chown -R root:root "$INSTALL_DIR"
+chmod -R go-w "$INSTALL_DIR"
+[ -f "$INSTALL_DIR/.env" ] && chmod 600 "$INSTALL_DIR/.env"
+
+# Read the one setting we need from .env without sourcing it. Sourcing would
+# execute the file as root, including anything written into it while it was
+# still owned by the service user.
+env_value() {
+  [ -f "$INSTALL_DIR/.env" ] || return 0
+  sed -n "s/^[[:space:]]*$1=//p" "$INSTALL_DIR/.env" | tail -1 \
+    | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+KAVITA_EPAPER_RELEASES_DIR="${KAVITA_EPAPER_RELEASES_DIR:-$(env_value KAVITA_EPAPER_RELEASES_DIR)}"
 RELEASES_DIR="${KAVITA_EPAPER_RELEASES_DIR:-$DEFAULT_RELEASES_DIR}"
 
 SOURCE="${1:-}"
@@ -164,8 +177,9 @@ if [ -f "$TMPDIR/extract/deploy/update.sh" ]; then
   install -m 755 "$TMPDIR/extract/deploy/update.sh" "$INSTALL_DIR/update.sh"
 fi
 
-chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/app" "$INSTALL_DIR/requirements.txt"
-[ -f "$INSTALL_DIR/VERSION" ] && chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/VERSION"
+chown -R root:root "$INSTALL_DIR/app" "$INSTALL_DIR/requirements.txt" "$INSTALL_DIR/venv"
+[ -f "$INSTALL_DIR/VERSION" ] && chown root:root "$INSTALL_DIR/VERSION"
+chmod -R go-w "$INSTALL_DIR/app"
 
 echo "[+] starting $SVC_NAME"
 systemctl reset-failed "$SVC_NAME" 2>/dev/null || true
