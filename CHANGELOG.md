@@ -21,10 +21,16 @@ upgrade notes called out where they require manual steps.
 - `update.sh` re-applies the ownership on every run, so existing installs
   are corrected by their next update.
 
+### Changed
+- `update.sh` hands off to the `update.sh` inside the tarball when the two
+  differ, so a release's own install steps always apply to its install.
+  Previously the outgoing release's script ran the whole update.
+
 ### Notes
-- The `update.sh` already installed on a pre-0.7.15 host is the old one,
-  and it still sources `.env` during the update that installs the fix.
-  Fix ownership by hand first; see README, "Migration".
+- The `update.sh` already installed on a pre-0.7.15 host predates the
+  handoff, sources `.env`, and chowns `app/` back to the service user. For
+  this upgrade run `deploy/update.sh` from the extracted tarball instead;
+  see README, "Migration".
 
 ## [0.7.14] - fix EPUB image rendering
 

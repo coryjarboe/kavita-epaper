@@ -147,6 +147,19 @@ if [ -n "$TARBALL_SVC" ]; then
   fi
 fi
 
+# Hand off to the update.sh shipped in the tarball when it differs from this
+# one, so each release's own install logic (ownership, new steps) applies to
+# its own install. Runs as a child, not exec, so this process's EXIT trap
+# still cleans up TMPDIR (which holds a downloaded tarball) afterwards. The
+# call and exit share one line because bash parses a whole line before
+# running it, and the child may replace this file on disk.
+INCOMING="$TMPDIR/extract/deploy/update.sh"
+if [ -z "${KAVITA_EPAPER_UPDATE_HANDOFF:-}" ] && [ -f "$INCOMING" ] && \
+   ! cmp -s "$INCOMING" "${BASH_SOURCE[0]}"; then
+  echo "[+] handing off to the tarball's update.sh"
+  KAVITA_EPAPER_UPDATE_HANDOFF=1 bash "$INCOMING" "$TARBALL"; exit $?
+fi
+
 [ -f "$TMPDIR/extract/VERSION" ] && echo "[+] new version: $(cat "$TMPDIR/extract/VERSION")"
 [ -f "$INSTALL_DIR/VERSION" ] && echo "[+] current version: $(cat "$INSTALL_DIR/VERSION")"
 
