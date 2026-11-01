@@ -66,9 +66,9 @@ Pick whichever fits how you got the code.
 LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
   | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*kavita-epaper-v[0-9][^"]*\.tar\.gz"' \
   | head -1 | grep -oE 'https://[^"]+')
-mkdir -p /tmp/kavita-epaper
-curl -fsSL "$LATEST" | tar -xzf - -C /tmp/kavita-epaper
-cd /tmp/kavita-epaper
+D=$(mktemp -d)
+curl -fsSL "$LATEST" | tar -xzf - -C "$D"
+cd "$D"
 sudo bash ./deploy/install.sh
 ```
 
@@ -88,10 +88,12 @@ Use this for the absolute latest, or if you plan to modify the code locally.
 
 ### Option C: from a tarball you already have
 
+Run this from the directory that holds the tarball, or give the tarball's absolute path.
+
 ```bash
-mkdir -p /tmp/kavita-epaper
-tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C /tmp/kavita-epaper
-cd /tmp/kavita-epaper
+D=$(mktemp -d)
+tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C "$D"
+cd "$D"
 sudo bash ./deploy/install.sh
 ```
 
@@ -183,12 +185,12 @@ One-time fixes for installs that predate the current `install.sh`. `update.sh` o
 
 ### Upgrading from before 0.7.15
 
-Older installers left `/opt/kavita-epaper` owned by the `kavita-epaper` service user, and the `update.sh` they installed executes `.env` as root. For this one upgrade, run the `update.sh` that ships in the new release, not the installed one:
+Older installers left `/opt/kavita-epaper` owned by the `kavita-epaper` service user, and the `update.sh` they installed executes `.env` as root. For this one upgrade, run the `update.sh` that ships in the new release, not the installed one. Run these from the directory that holds the tarball, or give the tarball's absolute path in both places:
 
 ```bash
-mkdir -p /tmp/kavita-epaper
-tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C /tmp/kavita-epaper
-sudo bash /tmp/kavita-epaper/deploy/update.sh kavita-epaper-vX.Y.Z.tar.gz
+D=$(mktemp -d)
+tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C "$D"
+sudo bash "$D/deploy/update.sh" kavita-epaper-vX.Y.Z.tar.gz
 ```
 
 It makes the install dir root-owned before reading anything in it, never executes `.env`, and replaces `/opt/kavita-epaper/update.sh` with itself. Don't use the installed `update.sh` for this upgrade: it finishes by handing `app/`, `requirements.txt` and `VERSION` back to the service user. After this, update as usual; from 0.7.15 on, `update.sh` hands off to the copy shipped in each new release by itself.
