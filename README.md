@@ -69,7 +69,7 @@ LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releas
 mkdir -p /tmp/kavita-epaper
 curl -fsSL "$LATEST" | tar -xzf - -C /tmp/kavita-epaper
 cd /tmp/kavita-epaper
-sudo ./deploy/install.sh
+sudo bash ./deploy/install.sh
 ```
 
 Pulls the latest tagged release. What most people want.
@@ -81,7 +81,7 @@ Needs `git`.
 ```bash
 git clone https://github.com/coryjarboe/kavita-epaper.git
 cd kavita-epaper
-sudo ./deploy/install.sh
+sudo bash ./deploy/install.sh
 ```
 
 Use this for the absolute latest, or if you plan to modify the code locally.
@@ -92,7 +92,7 @@ Use this for the absolute latest, or if you plan to modify the code locally.
 mkdir -p /tmp/kavita-epaper
 tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C /tmp/kavita-epaper
 cd /tmp/kavita-epaper
-sudo ./deploy/install.sh
+sudo bash ./deploy/install.sh
 ```
 
 For offline installs, air-gapped environments, or pinning a specific version.
@@ -240,7 +240,7 @@ Passing a tarball path, URL or `--github` always works regardless.
 ```bash
 # both default to port 8095, so stop the old service first
 sudo systemctl disable --now kavita-boox
-sudo ./deploy/install.sh        # from an extracted kavita-epaper release
+sudo bash ./deploy/install.sh        # from an extracted kavita-epaper release
 # copy KAVITA_BASE_URL and any other settings from /opt/kavita-boox/.env;
 # variables were renamed from KAVITA_BOOX_* to KAVITA_EPAPER_*
 sudo systemctl restart kavita-epaper
