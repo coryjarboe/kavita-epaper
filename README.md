@@ -181,18 +181,19 @@ All four modes preserve `.env` and the cover cache, skip `pip install` when `req
 
 One-time fixes for installs that predate the current `install.sh`. `update.sh` only replaces code; it never rewrites `.env` or creates directories, so older hosts keep whatever their original installer left behind.
 
-### Upgrading to 0.7.15 or later from an older install
+### Upgrading from before 0.7.15
 
-Older installers left `/opt/kavita-epaper` owned by the `kavita-epaper` service user. The `update.sh` already on your host is the old one, and it executes `.env` as root while it installs the fix. Correct ownership by hand first, then update as usual:
+Older installers left `/opt/kavita-epaper` owned by the `kavita-epaper` service user, and the `update.sh` they installed executes `.env` as root. For this one upgrade, run the `update.sh` that ships in the new release, not the installed one:
 
 ```bash
-sudo chown -R root:root /opt/kavita-epaper
-sudo chmod -R go-w /opt/kavita-epaper
-sudo chmod 600 /opt/kavita-epaper/.env
-sudo /opt/kavita-epaper/update.sh /path/to/kavita-epaper-vX.Y.Z.tar.gz
+mkdir -p /tmp/kavita-epaper
+tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C /tmp/kavita-epaper
+sudo bash /tmp/kavita-epaper/deploy/update.sh kavita-epaper-vX.Y.Z.tar.gz
 ```
 
-The service keeps working with a root-only `.env`, because systemd reads it as root before starting the service. If you suspect the service account was compromised, review `.env` and `update.sh` for anything you didn't put there before running the update.
+It makes the install dir root-owned before reading anything in it, never executes `.env`, and replaces `/opt/kavita-epaper/update.sh` with itself. Don't use the installed `update.sh` for this upgrade: it finishes by handing `app/`, `requirements.txt` and `VERSION` back to the service user. After this, update as usual; from 0.7.15 on, `update.sh` hands off to the copy shipped in each new release by itself.
+
+The service keeps working with a root-only `.env`, because systemd reads it as root before starting the service. If you suspect the service account was compromised, review `.env` for anything you didn't put there before upgrading.
 
 ### `.env` from before 0.7.11
 
