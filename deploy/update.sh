@@ -169,6 +169,30 @@ if [ -f "$TMPDIR/extract/VERSION" ] && [ -f "$INSTALL_DIR/VERSION" ] && \
   exit 0
 fi
 
+# Service unit. Install the shipped unit when it differs from the installed
+# one. This point is only reached after the cross-project guard above, so
+# the unit belongs to this project. The new unit is verified before anything
+# is stopped, and the installed one is backed up and put back if the service
+# won't start. Local changes belong in a drop-in under
+# /etc/systemd/system/$SVC_NAME.d/ (systemctl edit), which this never touches.
+UNIT_SRC="$TMPDIR/extract/deploy/$SVC_NAME"
+UNIT_DST="/etc/systemd/system/$SVC_NAME"
+UNIT_CHANGED=""
+UNIT_BACKUP=""
+if [ -f "$UNIT_SRC" ] && ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
+  echo "[+] service unit changed, verifying the new one"
+  # verify exits 0 on warnings such as unknown keys, so also fail on any
+  # message about this unit. Messages about unrelated units don't count.
+  VERIFY_RC=0
+  VERIFY_OUT=$(systemd-analyze verify "$UNIT_SRC" 2>&1) || VERIFY_RC=$?
+  if [ "$VERIFY_RC" -ne 0 ] || printf '%s\n' "$VERIFY_OUT" | grep -qF -e "$UNIT_SRC" -e "$SVC_NAME"; then
+    printf '%s\n' "$VERIFY_OUT" >&2
+    echo "[✗] new $SVC_NAME failed systemd-analyze verify; nothing was changed" >&2
+    exit 1
+  fi
+  UNIT_CHANGED=1
+fi
+
 echo "[+] stopping $SVC_NAME"
 systemctl stop "$SVC_NAME" || true
 
@@ -194,9 +218,22 @@ chown -R root:root "$INSTALL_DIR/app" "$INSTALL_DIR/requirements.txt" "$INSTALL_
 [ -f "$INSTALL_DIR/VERSION" ] && chown root:root "$INSTALL_DIR/VERSION"
 chmod -R go-w "$INSTALL_DIR/app"
 
+if [ -n "$UNIT_CHANGED" ]; then
+  if [ -f "$UNIT_DST" ]; then
+    mkdir -p /var/backups
+    UNIT_BACKUP="/var/backups/$SVC_NAME.$(date +%Y%m%d-%H%M%S)"
+    cp -p "$UNIT_DST" "$UNIT_BACKUP"
+    echo "[+] backed up the installed unit to $UNIT_BACKUP"
+  fi
+  install -m 644 "$UNIT_SRC" "$UNIT_DST"
+  systemctl daemon-reload
+  echo "[+] installed the new $SVC_NAME"
+fi
+
 echo "[+] starting $SVC_NAME"
 systemctl reset-failed "$SVC_NAME" 2>/dev/null || true
-systemctl start "$SVC_NAME"
+# Don't let set -e exit here: a failed start must reach the unit rollback.
+systemctl start "$SVC_NAME" || true
 
 sleep 2
 if systemctl is-active --quiet "$SVC_NAME"; then
@@ -204,5 +241,24 @@ if systemctl is-active --quiet "$SVC_NAME"; then
   systemctl status "$SVC_NAME" --no-pager | head -3
 else
   echo "[✗] service failed to start; check: journalctl -u $SVC_NAME -n 30" >&2
+  if [ -n "$UNIT_CHANGED" ]; then
+    if [ -n "$UNIT_BACKUP" ]; then
+      echo "[!] restoring the previous unit from $UNIT_BACKUP" >&2
+      install -m 644 "$UNIT_BACKUP" "$UNIT_DST"
+      systemctl daemon-reload
+      systemctl reset-failed "$SVC_NAME" 2>/dev/null || true
+      systemctl start "$SVC_NAME" 2>/dev/null || true
+      sleep 2
+      if systemctl is-active --quiet "$SVC_NAME"; then
+        echo "[!] running on the previous unit with the new code; the update is incomplete" >&2
+      else
+        echo "[✗] still not running on the previous unit" >&2
+      fi
+    else
+      echo "[!] there was no previous unit; removing the new one" >&2
+      rm -f "$UNIT_DST"
+      systemctl daemon-reload
+    fi
+  fi
   exit 1
 fi

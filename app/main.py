@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import secrets
 import time
 from typing import Any
@@ -109,6 +110,10 @@ _signer = TimestampSigner(SECRET_KEY)
 
 logger = logging.getLogger("kavita-epaper")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+# httpx logs every request URL at INFO, and Kavita's image and resource
+# endpoints take the apiKey as a query parameter, so INFO would write live
+# keys to the journal. Warnings and errors still come through.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 # ----- session helpers -------------------------------------------------------
@@ -593,7 +598,7 @@ async def read_resource(
     return Response(
         content=data,
         media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 
@@ -881,10 +886,9 @@ def _rewrite_book_resources(html: str, chapter_id: int) -> str:
 
     Matches any chapter id (Kavita sometimes references resources from other
     chapters in the same book). Case-insensitive. Preserves the query string
-    so file= and any apiKey stay intact for the resource fetch.
+    so file= stays intact for the resource fetch; any apiKey in it is then
+    removed by _strip_api_key, since /read-resource adds its own.
     """
-    import re
-
     # Capture group 1: the chapter id. Drop everything from `//...` through
     # `/api/book/{id}/book-resources` and replace with `/read-resource/{id}`.
     # The (?:...) host segment is non-capturing.
@@ -892,7 +896,30 @@ def _rewrite_book_resources(html: str, chapter_id: int) -> str:
         r"(?://[^/\s\"']+)?(?:/[^/\s\"']*)*?/api/book/(\d+)/book-resources",
         re.IGNORECASE,
     )
-    return pattern.sub(r"/read-resource/\1", html)
+    return _strip_api_key(pattern.sub(r"/read-resource/\1", html))
+
+
+# An apiKey query parameter, with the separator in front of it (?, & or the
+# HTML-escaped &amp;) and the one after it, if any.
+_API_KEY_PARAM = re.compile(
+    r"([?&]|&amp;)apikey=[^&\"'\s<>)]*((?:&amp;|&)?)", re.IGNORECASE
+)
+
+
+def _strip_api_key(html: str) -> str:
+    """Remove apiKey query parameters from URLs in book page HTML.
+
+    Kavita embeds the user's apiKey in every book-resources URL. /read-resource
+    adds the key server-side, so the browser's copy is never used; leaving it
+    in would put a live key in the DOM and in the access log on every image
+    load. "?apiKey=K&file=x" becomes "?file=x", "?file=x&apiKey=K" becomes
+    "?file=x", and other parameters keep their separators."""
+
+    def repl(m: re.Match) -> str:
+        lead, trail = m.group(1), m.group(2)
+        return "?" if lead == "?" else trail
+
+    return _API_KEY_PARAM.sub(repl, html)
 
 
 def _to_grayscale(data: bytes, content_type: str) -> tuple[bytes, str]:
@@ -946,7 +973,7 @@ async def _serve_cover(
             return Response(
                 content=data,
                 media_type=ctype,
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers={"Cache-Control": "private, max-age=86400"},
             )
         except Exception:  # noqa: BLE001
             pass
@@ -974,7 +1001,7 @@ async def _serve_cover(
     return Response(
         content=data,
         media_type=ctype,
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 

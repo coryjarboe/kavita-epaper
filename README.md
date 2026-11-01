@@ -177,7 +177,7 @@ export GITHUB_TOKEN=ghp_...
 sudo -E /opt/kavita-epaper/update.sh --github your-org/kavita-epaper
 ```
 
-All four modes preserve `.env` and the cover cache, skip `pip install` when `requirements.txt` is unchanged, and verify the service comes back up before exiting non-zero.
+All four modes preserve `.env` and the cover cache, skip `pip install` when `requirements.txt` is unchanged, install the release's service unit when it changed (see [Service unit](#service-unit)), and verify the service comes back up before exiting non-zero.
 
 ## Migration
 
@@ -276,11 +276,28 @@ Restart after changes:
 sudo systemctl restart kavita-epaper
 ```
 
+### Service unit
+
+`install.sh` and `update.sh` overwrite `/etc/systemd/system/kavita-epaper.service` whenever a release ships a changed one. `update.sh` checks the new unit with `systemd-analyze verify` first, saves the old one to `/var/backups/kavita-epaper.service.<timestamp>`, and puts it back if the service won't start. Edits made directly to the unit file are lost at that point, so put local changes in a drop-in, which updates never touch:
+
+```bash
+sudo systemctl edit kavita-epaper
+```
+
+This writes `/etc/systemd/system/kavita-epaper.service.d/override.conf`, for example:
+
+```ini
+[Service]
+MemoryMax=256M
+```
+
+Settings the app reads (`KAVITA_*`) still belong in `.env`.
+
 ## Uninstall
 
 ```bash
 sudo systemctl disable --now kavita-epaper
-sudo rm -rf /opt/kavita-epaper /var/cache/kavita-epaper /var/lib/kavita-epaper /etc/systemd/system/kavita-epaper.service
+sudo rm -rf /opt/kavita-epaper /var/cache/kavita-epaper /var/lib/kavita-epaper /etc/systemd/system/kavita-epaper.service /etc/systemd/system/kavita-epaper.service.d
 sudo userdel kavita-epaper
 sudo systemctl daemon-reload
 ```

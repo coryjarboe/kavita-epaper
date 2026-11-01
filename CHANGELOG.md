@@ -4,6 +4,47 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.16] - keep Kavita apiKeys out of logs and the browser
+
+### Security
+- httpx logged every Kavita request URL at INFO, and the cover and
+  book-resource endpoints take the apiKey as a query parameter, so live
+  keys went to the journal. The httpx logger is now at WARNING.
+- Kavita's book page HTML embeds the user's apiKey in every resource URL,
+  and the reader passed it through to the browser, where it sat in the
+  DOM and in uvicorn's access log on every image load. `/read-resource`
+  adds the key server-side, so the reader now strips it from the page.
+- Covers and book resources were sent with `Cache-Control: public`, which
+  lets a shared cache (for example a caching reverse proxy) serve them
+  without a login. They are now `private`.
+- The service unit sets `InaccessiblePaths=-/opt/kavita`, so the service
+  user can't read a local Kavita install's database (which holds every
+  user's auth keys). kavita-epaper only talks to Kavita over HTTP. The
+  leading `-` skips the path when Kavita lives elsewhere.
+
+### Changed
+- `update.sh` now installs the release's service unit when it differs
+  from the installed one. It runs `systemd-analyze verify` on the new unit
+  before stopping anything (and refuses any warning about it), saves the
+  old unit to `/var/backups/kavita-epaper.service.<timestamp>`, and puts
+  it back and exits non-zero if the service doesn't come up. Previously
+  only `install.sh` installed the unit, so unit changes never reached
+  existing installs.
+
+### Notes
+- Local changes made directly to
+  `/etc/systemd/system/kavita-epaper.service` are overwritten when a
+  release changes the unit. Move them to a drop-in
+  (`sudo systemctl edit kavita-epaper`, which writes
+  `kavita-epaper.service.d/override.conf`); see README, "Service unit".
+- Upgrading from 0.7.15 installed before the `update.sh` handoff existed:
+  run `deploy/update.sh` from the extracted tarball, as in README,
+  "Migration", so this release's unit step runs.
+- Keys already written to the journal stay there. Regenerate the Kavita
+  auth keys of every user who used kavita-epaper before this release.
+  The session cookie keeps the key from sign-in, so after regenerating,
+  sign out of kavita-epaper and back in to pick up the new key.
+
 ## [0.7.15] - root-owned install dir
 
 ### Security

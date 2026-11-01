@@ -23,6 +23,10 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/cache/kavita-epaper
+# Talk to Kavita over HTTP only. A local Kavita install keeps every user's
+# auth keys in its database, often world-readable. The leading "-" skips
+# the path when Kavita is installed elsewhere or not on this host.
+InaccessiblePaths=-/opt/kavita
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
