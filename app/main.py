@@ -4,18 +4,24 @@ kavita-epaper: minimal e-ink-friendly web UI for Kavita.
 Sits alongside the official Kavita UI. Talks to Kavita's REST API.
 Designed to be served behind a reverse proxy (e.g. nginx proxy manager).
 
-All Kavita auth state (JWT + refresh token + apiKey) lives server-side
-in a signed cookie session. The browser only ever sees an opaque session
-cookie. EPUB downloads are streamed through this app.
+All Kavita auth state (JWT + refresh token + apiKey) is kept in an
+encrypted, authenticated cookie (Fernet). The browser only ever sees an
+opaque session cookie. EPUB downloads are streamed through this app.
 """
 
 from __future__ import annotations
 
+import base64
+import contextlib
+import hashlib
+import hmac
 import io
+import json
 import logging
 import os
 import re
 import secrets
+import tempfile
 import time
 from typing import Any
 from urllib.parse import quote
@@ -25,13 +31,18 @@ from fastapi import Cookie, Depends, FastAPI, Form, HTTPException, Query, Reques
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from itsdangerous import BadSignature, TimestampSigner
-from itsdangerous import URLSafeSerializer
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 # ----- config ---------------------------------------------------------------
 
 KAVITA_BASE_URL = os.environ.get("KAVITA_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
 SECRET_KEY = os.environ.get("KAVITA_EPAPER_SECRET", "")
+# Optional previous secret, for rotation: cookies encrypted under it are still
+# accepted and re-issued under KAVITA_EPAPER_SECRET. Remove it after
+# SESSION_TTL to finish the rotation.
+SECRET_PREVIOUS = os.environ.get("KAVITA_EPAPER_SECRET_PREVIOUS", "")
 COOKIE_NAME = os.environ.get("KAVITA_EPAPER_COOKIE", "kesess")
 # Cookie 'Secure' attribute control. Tri-state:
 #   "auto"  (default): set Secure when the incoming request is HTTPS, omit
@@ -53,6 +64,15 @@ if COOKIE_SECURE not in ("auto", "true", "false"):
 SESSION_TTL = int(os.environ.get("KAVITA_EPAPER_SESSION_TTL", str(60 * 60 * 24 * 30)))
 # cover cache directory (optional grayscale-pre-rendered covers).
 COVER_CACHE_DIR = os.environ.get("KAVITA_EPAPER_COVER_CACHE", "/var/cache/kavita-epaper/covers")
+# Cover cache lifetime in seconds; 0 turns the disk cache off. Entries are
+# per user, and an expired entry is only replaced after Kavita serves the
+# cover to that user again.
+_cover_ttl_raw = os.environ.get("KAVITA_EPAPER_COVER_TTL", "86400").strip() or "86400"
+try:
+    COVER_TTL = max(0, int(_cover_ttl_raw))
+except ValueError:
+    COVER_TTL = 86400
+    logging.warning("KAVITA_EPAPER_COVER_TTL=%r is not a number; using 86400.", _cover_ttl_raw)
 GRAYSCALE_COVERS = os.environ.get("KAVITA_EPAPER_GRAYSCALE", "true").lower() == "true"
 # Reader keepalive interval in seconds; 0 (default) turns it off. While a
 # reader page is visible it requests /ping this often, for e-readers whose
@@ -120,8 +140,22 @@ except Exception:  # noqa: BLE001
 templates.env.globals["APP_VERSION"] = APP_VERSION
 templates.env.globals["KEEPALIVE_SECONDS"] = KEEPALIVE_SECONDS
 
-_serializer = URLSafeSerializer(SECRET_KEY, salt="kavita-epaper-session")
-_signer = TimestampSigner(SECRET_KEY)
+
+def _cookie_fernet(secret: str) -> Fernet:
+    """Fernet key for the session cookie, derived from the app secret."""
+    key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"kavita-epaper session cookie v1",
+    ).derive(secret.encode())
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+_fernet = _cookie_fernet(SECRET_KEY)
+_fernet_previous = (
+    _cookie_fernet(SECRET_PREVIOUS) if SECRET_PREVIOUS and SECRET_PREVIOUS != SECRET_KEY else None
+)
 
 logger = logging.getLogger("kavita-epaper")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -149,25 +183,39 @@ logging.getLogger("uvicorn.access").addFilter(_DropPingAccessLog())
 
 
 def _encode_session(data: dict) -> str:
-    payload = _serializer.dumps(data)
-    return _signer.sign(payload.encode()).decode()
+    token = _fernet.encrypt(json.dumps(data, separators=(",", ":")).encode())
+    # Drop base64 padding: "=" would make the cookie value a quoted string.
+    return token.decode().rstrip("=")
 
 
-def _decode_session(raw: str | None) -> dict | None:
+def _decode_session(raw: str | None) -> tuple[dict | None, bool]:
+    """Return (data, reissue). data is None for a missing, foreign (e.g. the
+    signed-only format before 0.7.19), tampered or expired cookie, which the
+    caller treats as signed out. reissue is True when only the previous
+    secret could decrypt it, so the caller re-encrypts it under the current
+    one."""
     if not raw:
-        return None
+        return None, False
     try:
-        payload = _signer.unsign(raw, max_age=SESSION_TTL).decode()
-        return _serializer.loads(payload)
-    except (BadSignature, Exception):
-        return None
+        token = (raw + "=" * (-len(raw) % 4)).encode("ascii")
+    except UnicodeEncodeError:
+        return None, False
+    for fernet, reissue in ((_fernet, False), (_fernet_previous, True)):
+        if fernet is None:
+            continue
+        try:
+            data = json.loads(fernet.decrypt(token, ttl=SESSION_TTL))
+        except Exception:  # noqa: BLE001
+            continue
+        return (data, reissue) if isinstance(data, dict) else (None, False)
+    return None, False
 
 
 def _set_session_cookie(response: Response, data: dict, request: Request | None = None) -> None:
     # Resolve the Secure flag per-request. Uvicorn is launched with
-    # --proxy-headers --forwarded-allow-ips '*', so request.url.scheme
-    # already reflects X-Forwarded-Proto when a reverse proxy is in front;
-    # for direct connections it reflects the actual transport.
+    # --proxy-headers and trusts X-Forwarded-Proto from the addresses in
+    # KAVITA_EPAPER_FORWARDED_ALLOW_IPS, so request.url.scheme reflects the
+    # proxy's scheme for those and the actual transport for everyone else.
     if COOKIE_SECURE == "auto":
         secure = bool(request and request.url.scheme == "https")
     else:
@@ -194,8 +242,11 @@ class Session:
     """Per-request handle to the Kavita session in the cookie."""
 
     def __init__(self, raw_cookie: str | None):
-        self.data = _decode_session(raw_cookie) or {}
-        self.dirty = False
+        data, reissue = _decode_session(raw_cookie)
+        self.data = data or {}
+        # A cookie only the previous secret could open is written back under
+        # the current one by the next _flush_session.
+        self.dirty = reissue
 
     @property
     def token(self) -> str | None:
@@ -309,7 +360,12 @@ def require_auth(session: Session = Depends(get_session)) -> Session:
 @app.exception_handler(HTTPException)
 async def http_exc(request: Request, exc: HTTPException):
     if exc.status_code == 302 and exc.headers and "Location" in exc.headers:
-        return RedirectResponse(exc.headers["Location"], status_code=302)
+        response = RedirectResponse(exc.headers["Location"], status_code=302)
+        # Signed out with a cookie present: it is stale (old format, expired,
+        # other secret), so drop it instead of sending it on every request.
+        if exc.headers["Location"] == "/login" and COOKIE_NAME in request.cookies:
+            _clear_session_cookie(response)
+        return response
     return templates.TemplateResponse(
         "error.html",
         {"request": request, "status": exc.status_code, "detail": str(exc.detail)},
@@ -990,6 +1046,97 @@ def _to_grayscale(data: bytes, content_type: str) -> tuple[bytes, str]:
         return data, content_type
 
 
+_COVER_LEGACY = re.compile(r"^(series|library)-\d+\.bin(\.ct)?$")
+_COVER_USER = re.compile(r"^u[0-9a-f]{16}-(series|library)-\d+\.bin(\.ct)?$")
+_COVER_TMP_PREFIX = ".tmp-"
+_PLACEHOLDER_GIF = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+
+
+def _cover_user_tag(session: Session) -> str | None:
+    """Opaque per-user prefix for cover cache files. Keyed with the app
+    secret so file names don't reveal usernames."""
+    name = (session.username or "").strip().lower()
+    if not name:
+        return None
+    digest = hmac.new(SECRET_KEY.encode(), b"cover-cache\0" + name.encode(), hashlib.sha256)
+    return digest.hexdigest()[:16]
+
+
+def _read_cover(path: str) -> tuple[bytes, str, float] | None:
+    """(data, content type, age in seconds), or None if not cached."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+            age = time.time() - os.fstat(f.fileno()).st_mtime
+        with open(path + ".ct", "r") as f:
+            ctype = f.read().strip() or "image/jpeg"
+    except OSError:
+        return None
+    return data, ctype, age
+
+
+def _write_cover(path: str, data: bytes, ctype: str) -> None:
+    """Write both files via temp file + rename, so a reader never sees a
+    partial cover. The .ct goes first; the .bin's mtime is the entry's age."""
+    try:
+        for target, content in ((path + ".ct", ctype.encode()), (path, data)):
+            fd, tmp = tempfile.mkstemp(dir=COVER_CACHE_DIR, prefix=_COVER_TMP_PREFIX)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(content)
+                os.chmod(tmp, 0o644)
+                os.replace(tmp, target)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                raise
+    except Exception as e:  # noqa: BLE001
+        logger.warning("cover cache write failed: %s", e)
+
+
+def _remove_cover(path: str) -> None:
+    for target in (path, path + ".ct"):
+        with contextlib.suppress(OSError):
+            os.unlink(target)
+
+
+def _prune_cover_cache() -> int:
+    """Delete cover files nobody can be served: the shared files from before
+    0.7.19, per-user files past COVER_TTL (all of them when the cache is off)
+    and temp files older than an hour. Only regular files whose names match
+    exactly; never follows symlinks."""
+    now = time.time()
+    removed = 0
+    try:
+        entries = list(os.scandir(COVER_CACHE_DIR))
+    except OSError as e:
+        logger.warning("cover cache prune skipped: %s", e)
+        return 0
+    for entry in entries:
+        try:
+            if not entry.is_file(follow_symlinks=False):
+                continue
+            name = entry.name
+            if _COVER_LEGACY.match(name):
+                pass
+            elif _COVER_USER.match(name):
+                age = now - entry.stat(follow_symlinks=False).st_mtime
+                if COVER_TTL and 0 <= age <= COVER_TTL:
+                    continue
+            elif name.startswith(_COVER_TMP_PREFIX):
+                if now - entry.stat(follow_symlinks=False).st_mtime <= 3600:
+                    continue
+            else:
+                continue
+            os.unlink(entry.path)
+            removed += 1
+        except OSError:
+            continue
+    if removed:
+        logger.info("cover cache: removed %d stale file(s)", removed)
+    return removed
+
+
 async def _serve_cover(
     *,
     cache_key: str,
@@ -998,42 +1145,35 @@ async def _serve_cover(
     session: Session,
 ) -> Response:
     """Fetch a cover image from Kavita, optionally convert to grayscale, and
-    cache it on disk."""
-    cached = os.path.join(COVER_CACHE_DIR, f"{cache_key}.bin")
-    cached_meta = cached + ".ct"
-    if os.path.exists(cached) and os.path.exists(cached_meta):
-        try:
-            with open(cached, "rb") as f:
-                data = f.read()
-            with open(cached_meta, "r") as f:
-                ctype = f.read().strip() or "image/jpeg"
-            return Response(
-                content=data,
-                media_type=ctype,
-                headers={"Cache-Control": "private, max-age=86400"},
-            )
-        except Exception:  # noqa: BLE001
-            pass
+    cache it on disk per user. A cache hit is only ever served to the user
+    whose own Kavita request filled it, and only within COVER_TTL."""
+    tag = _cover_user_tag(session) if COVER_TTL > 0 else None
+    cached = os.path.join(COVER_CACHE_DIR, f"u{tag}-{cache_key}.bin") if tag else None
+    expired = False
+    if cached:
+        hit = _read_cover(cached)
+        if hit is not None:
+            data, ctype, age = hit
+            if 0 <= age <= COVER_TTL:
+                return Response(
+                    content=data,
+                    media_type=ctype,
+                    headers={"Cache-Control": "private, max-age=86400"},
+                )
+            expired = True
 
     r = await _kavita_request("GET", path, session=session, params=params)
     if r.status_code != 200:
+        if expired:
+            # Kavita no longer serves this cover to this user: forget it.
+            _remove_cover(cached)
         # 1x1 transparent gif so the page still lays out.
-        return Response(
-            content=b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;",
-            media_type="image/gif",
-            status_code=200,
-        )
+        return Response(content=_PLACEHOLDER_GIF, media_type="image/gif", status_code=200)
 
     ctype = r.headers.get("content-type", "image/jpeg")
     data, ctype = _to_grayscale(r.content, ctype)
-
-    try:
-        with open(cached, "wb") as f:
-            f.write(data)
-        with open(cached_meta, "w") as f:
-            f.write(ctype)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("cover cache write failed: %s", e)
+    if cached:
+        _write_cover(cached, data, ctype)
 
     return Response(
         content=data,
@@ -1081,6 +1221,11 @@ async def _proxy_download(*, path: str, params: dict, session: Session) -> Respo
 
 
 # ----- shutdown --------------------------------------------------------------
+
+
+@app.on_event("startup")
+async def _startup():
+    _prune_cover_cache()
 
 
 @app.on_event("shutdown")

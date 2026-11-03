@@ -193,20 +193,28 @@ if [ -f "$UNIT_SRC" ] && ! cmp -s "$UNIT_SRC" "$UNIT_DST"; then
   UNIT_CHANGED=1
 fi
 
+# Python dependencies go in while the current version is still running. If
+# pip fails, the update stops here and that version keeps serving. Adding
+# packages under a running process is safe: the new code only loads them at
+# the restart below.
+if [ -f "$INSTALL_DIR/requirements.txt" ] && \
+   diff -q "$INSTALL_DIR/requirements.txt" "$TMPDIR/extract/requirements.txt" >/dev/null 2>&1; then
+  echo "[+] requirements.txt unchanged, skipping pip"
+else
+  echo "[+] requirements.txt changed, updating venv before stopping $SVC_NAME"
+  if ! "$INSTALL_DIR/venv/bin/pip" install --quiet --upgrade -r "$TMPDIR/extract/requirements.txt"; then
+    echo "[✗] pip install failed; $SVC_NAME was not stopped and is still running $(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo 'the previous version')" >&2
+    echo "    nothing else was changed (pip may have added packages to the venv)" >&2
+    exit 1
+  fi
+fi
+
 echo "[+] stopping $SVC_NAME"
 systemctl stop "$SVC_NAME" || true
 
 echo "[+] syncing app/ → $INSTALL_DIR/app/"
 rsync -a --delete "$TMPDIR/extract/app/" "$INSTALL_DIR/app/"
-
-if [ -f "$INSTALL_DIR/requirements.txt" ] && \
-   diff -q "$INSTALL_DIR/requirements.txt" "$TMPDIR/extract/requirements.txt" >/dev/null 2>&1; then
-  echo "[+] requirements.txt unchanged, skipping pip"
-else
-  echo "[+] requirements.txt changed, updating venv"
-  cp "$TMPDIR/extract/requirements.txt" "$INSTALL_DIR/requirements.txt"
-  "$INSTALL_DIR/venv/bin/pip" install --quiet --upgrade -r "$INSTALL_DIR/requirements.txt"
-fi
+cp "$TMPDIR/extract/requirements.txt" "$INSTALL_DIR/requirements.txt"
 
 [ -f "$TMPDIR/extract/VERSION" ] && cp "$TMPDIR/extract/VERSION" "$INSTALL_DIR/VERSION"
 

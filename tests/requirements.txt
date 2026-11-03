@@ -1,0 +1,4 @@
+# Test-only dependencies, on top of the app's own.
+-r ../requirements.txt
+# Mints cookies in the signed-only format used up to 0.7.18.
+itsdangerous==2.2.0

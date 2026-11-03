@@ -38,7 +38,7 @@ If you try it on something else, open an issue with the device name and any quir
 
 ## Features
 
-- **Single sign-in.** Kavita username and password are sent once. The JWT is held in a signed HTTP-only cookie on the server. Browser never touches the token.
+- **Single sign-in.** Kavita username and password are sent once. The JWT, refresh token and API key are held in an encrypted HTTP-only cookie. Browser scripts never touch them.
 - **Library-first UI.** No dashboard, no homescreen. Open the PWA and you're in your books. Snap-scroll library tabs, cover grid, big tap targets.
 - **Built-in EPUB reader.** Proxies Kavita's `book-page` API and wraps it in an e-ink-friendly shell. CSS multi-column pagination via native `scrollLeft`. Same approach as Kavita's web reader so no edge bleed.
 - **Progress syncs with Kavita.** Tap a book, resume where you left off. Tracked per-user via Kavita's `/api/Reader/get-progress` and `/api/Reader/progress` endpoints. Open the same book in Kavita's web UI on another device and your position is there too.
@@ -140,17 +140,39 @@ Default bind is `0.0.0.0:8095` so the reverse proxy can live on a different host
 | SSL                   | whatever cert your proxy uses      |
 | Force SSL             | on                                 |
 
-Caddy and Traefik work the same way. Single HTTP upstream, no special headers needed past `X-Forwarded-Proto` (uvicorn runs with `--proxy-headers --forwarded-allow-ips '*'`).
+Caddy and Traefik work the same way. Single HTTP upstream, no special headers needed past `X-Forwarded-Proto` (uvicorn runs with `--proxy-headers`). To accept those headers only from your proxy, see [Security](#security).
 
 ### If your reverse proxy is on the same host
 
-Set `KAVITA_EPAPER_HOST=127.0.0.1` in `/opt/kavita-epaper/.env` and restart. Limits exposure to localhost so the proxy is the only way in.
+Set `KAVITA_EPAPER_HOST=127.0.0.1` and `KAVITA_EPAPER_FORWARDED_ALLOW_IPS=127.0.0.1` in `/opt/kavita-epaper/.env` and restart. Limits exposure to localhost so the proxy is the only way in.
 
 ### Direct access without a reverse proxy
 
 For a quick try, it works directly on its bound IP and port. Open `http://<host-ip>:8095` in a browser. The session cookie is issued without the `Secure` flag when accessed over plain HTTP (`KAVITA_EPAPER_COOKIE_SECURE=auto` does this by default), so login persists.
 
-> **Security note.** kavita-epaper uses Kavita's own auth model. Your credentials are posted to Kavita on first sign-in over whatever transport you've configured. If you're comfortable accessing Kavita over plain HTTP on a trusted LAN, kavita-epaper sits at the same level. For anything internet-facing, put TLS in front of both.
+> **Security note.** kavita-epaper uses Kavita's own auth model. Your credentials are posted to Kavita on first sign-in over whatever transport you've configured. If you're comfortable accessing Kavita over plain HTTP on a trusted LAN, kavita-epaper sits at the same level. For anything internet-facing, put TLS in front of both, and see [Security](#security).
+
+## Security
+
+The defaults suit a trusted home LAN. For anything beyond that:
+
+- **Trust only your proxy's forwarded headers** (`KAVITA_EPAPER_FORWARDED_ALLOW_IPS`).
+  - The default `*` lets any client send `X-Forwarded-For` and `X-Forwarded-Proto`, so anyone who can reach the port can fake their logged IP and make plain HTTP look like HTTPS.
+  - Set it in `.env` to your proxy's IP, e.g. `192.0.2.10`, or `127.0.0.1` for a proxy on the same host.
+  - Several proxies: a comma-separated list, no spaces (`192.0.2.10,192.0.2.11`). CIDR ranges like `192.0.2.0/28` work too. IP addresses only, not hostnames.
+  - Requests through a trusted proxy are logged with the real client IP (port `0`), and `KAVITA_EPAPER_COOKIE_SECURE=auto` sees the proxy's HTTPS. Anyone else is logged as they connect and their forwarded headers are ignored.
+  - If the list misses your proxy, the logs show the proxy's IP and `auto` treats requests as plain HTTP, so the cookie loses its `Secure` flag.
+- **Use HTTPS.** Put a TLS reverse proxy in front (see [Reverse proxy](#reverse-proxy)). Keep `KAVITA_EPAPER_COOKIE_SECURE` at `auto`, or `true` if you only ever use HTTPS (with `true`, sign-in won't stick over plain HTTP).
+- **Don't expose the app port.**
+  - Proxy on the same host: set `KAVITA_EPAPER_HOST=127.0.0.1`.
+  - Proxy elsewhere: firewall port `8095` (`KAVITA_EPAPER_PORT`) to the proxy only, e.g. `sudo ufw allow from 192.0.2.10 to any port 8095 proto tcp` and no other rule for that port.
+- **Use a long random secret.**
+  - `install.sh` generates `KAVITA_EPAPER_SECRET`. To make one: `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`.
+  - It encrypts session cookies and keys the cover cache. Changing it signs everyone out, and covers are fetched again.
+  - To rotate without signing everyone out: move the current value to `KAVITA_EPAPER_SECRET_PREVIOUS`, set a new `KAVITA_EPAPER_SECRET`, restart. Old cookies are re-issued under the new secret the next time they open a page.
+  - After `KAVITA_EPAPER_SESSION_TTL` (30 days by default), remove `KAVITA_EPAPER_SECRET_PREVIOUS` and restart. Anyone who hasn't opened a page since the rotation is signed out then.
+- **Keep files root-owned.** `/opt/kavita-epaper/.env` stays `root:root` mode `600` (systemd reads it before switching to the service user), and `/opt/kavita-epaper` stays owned by root. `install.sh` and `update.sh` set both.
+- **Update with `update.sh`.** It verifies the new unit, installs dependencies before stopping the service, resets ownership and the `.env` mode, and checks the service comes back up (see [Update](#update)).
 
 ## Update
 
@@ -179,7 +201,7 @@ export GITHUB_TOKEN=ghp_...
 sudo -E /opt/kavita-epaper/update.sh --github your-org/kavita-epaper
 ```
 
-All four modes preserve `.env` and the cover cache, skip `pip install` when `requirements.txt` is unchanged, install the release's service unit when it changed (see [Service unit](#service-unit)), and verify the service comes back up before exiting non-zero.
+All four modes preserve `.env` and the cover cache, skip `pip install` when `requirements.txt` is unchanged (and otherwise run it before stopping the service, so a failed install leaves the old version running), install the release's service unit when it changed (see [Service unit](#service-unit)), and verify the service comes back up before exiting non-zero.
 
 ## Migration
 
@@ -267,10 +289,13 @@ Users sign in again after the move, because the new install generates a new sess
 | `KAVITA_BASE_URL`            | `http://127.0.0.1:5000`         | Kavita API address (server-to-server). Change if Kavita isn't local. |
 | `KAVITA_EPAPER_HOST`         | `0.0.0.0`                       | Interface to bind. `127.0.0.1` is loopback only.     |
 | `KAVITA_EPAPER_PORT`         | `8095`                          | TCP port to listen on.                               |
-| `KAVITA_EPAPER_SECRET`       | auto-generated                  | Signs session cookies. Don't change after install.   |
+| `KAVITA_EPAPER_SECRET`       | auto-generated                  | Encrypts session cookies. Changing it signs everyone out; see below. |
+| `KAVITA_EPAPER_SECRET_PREVIOUS` | unset                        | Old secret during a rotation; its cookies are still accepted. |
 | `KAVITA_EPAPER_COOKIE_SECURE`| `auto`                          | `auto` follows request scheme. Or pin `true`/`false`.|
 | `KAVITA_EPAPER_SESSION_TTL`  | `2592000` (30d)                 | Session lifetime in seconds.                         |
 | `KAVITA_EPAPER_GRAYSCALE`    | `true`                          | Pre-render covers to grayscale. Disable for color.   |
+| `KAVITA_EPAPER_COVER_TTL`    | `86400` (1 day)                 | Seconds a cached cover is served before refetching. `0` = no disk cache. Cached per user. |
+| `KAVITA_EPAPER_FORWARDED_ALLOW_IPS` | `*`                      | Who may set `X-Forwarded-*` headers. Your proxy's IP, e.g. `192.0.2.10`; see [Security](#security). |
 | `KAVITA_EPAPER_KEEPALIVE_SECONDS` | `0` (off)                  | Reader pings `/ping` this often while visible, for e-readers whose Wi-Fi drops between page loads. Try `25`. |
 | `KAVITA_EPAPER_RELEASES_DIR` | `/var/lib/kavita-epaper/releases` | Where `update.sh` looks when called with no args.  |
 
@@ -279,6 +304,8 @@ Restart after changes:
 ```bash
 sudo systemctl restart kavita-epaper
 ```
+
+To rotate `KAVITA_EPAPER_SECRET` without signing everyone out, see [Security](#security).
 
 ### Service unit
 

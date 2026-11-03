@@ -4,6 +4,53 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.19] - encrypted session cookie, per-user cover cache, trusted proxy
+
+### Security
+- The session cookie is now encrypted, not just signed. It holds the
+  user's Kavita JWT, refresh token and API key, which anyone with a copy
+  of the cookie could previously read by base64-decoding it. It now uses
+  Fernet (AES-128-CBC with HMAC-SHA256) from the `cryptography` package,
+  with the key derived from `KAVITA_EPAPER_SECRET` by HKDF-SHA256. The
+  optional `KAVITA_EPAPER_SECRET_PREVIOUS` lets you rotate the secret
+  without signing everyone out. `itsdangerous` is no longer used.
+- Covers are cached per user. A cached cover used to be served to any
+  signed-in user without asking Kavita, so a cache hit could show a cover
+  Kavita would refuse that user. Each user's entries now come only from
+  their own Kavita requests, and file names use an HMAC of the username.
+  Entries expire after `KAVITA_EPAPER_COVER_TTL` seconds (default 86400,
+  `0` turns the disk cache off). When Kavita refuses an expired cover, the
+  entry is deleted and a blank placeholder is served. Cache writes are
+  atomic.
+- The service unit takes uvicorn's `--forwarded-allow-ips` from
+  `KAVITA_EPAPER_FORWARDED_ALLOW_IPS`. The default stays `*`, so home
+  installs work unchanged; set it to your reverse proxy's address (for
+  example `192.0.2.10`) so other clients can't fake their IP or the
+  request scheme with `X-Forwarded-*` headers.
+- New README "Security" section on hardening beyond a trusted home LAN:
+  trusted proxy IPs, HTTPS and `KAVITA_EPAPER_COOKIE_SECURE`, not
+  exposing the app port, the secret and its rotation, file ownership,
+  and updating with `update.sh`.
+
+### Changed
+- `update.sh` installs changed Python dependencies before stopping the
+  service. If `pip` fails, it exits non-zero with the previous version
+  still running. Previously it stopped the service first, so a failed
+  install left it down.
+- Developer tests now live in `tests/` (a fake Kavita, app and proxy
+  tests on scratch ports, and an `update.sh` harness); see
+  `tests/README.md`. They are not part of the release tarball.
+
+### Notes
+- Everyone must sign in again after this update: cookies from earlier
+  versions can't be decrypted. They are treated as signed out (a redirect
+  to the login page that also deletes the old cookie, never an error).
+- The cover cache rebuilds. The first start removes the old shared cover
+  files, and covers are fetched again from Kavita as they are viewed.
+- This release adds `cryptography` to `requirements.txt`, so `update.sh`
+  needs to reach PyPI. Run the tarball's `update.sh` or the installed one;
+  both install the dependency before stopping the service.
+
 ## [0.7.18] - optional reader keepalive
 
 ### Added

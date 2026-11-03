@@ -13,8 +13,11 @@ WorkingDirectory=/opt/kavita-epaper
 # reverse proxy or LAN. Override to 127.0.0.1 in .env if proxy is local-only.
 Environment="KAVITA_EPAPER_HOST=0.0.0.0"
 Environment="KAVITA_EPAPER_PORT=8095"
+# Addresses allowed to set X-Forwarded-For / X-Forwarded-Proto. "*" trusts
+# every client; override in .env (see the README's Security section).
+Environment="KAVITA_EPAPER_FORWARDED_ALLOW_IPS=*"
 EnvironmentFile=/opt/kavita-epaper/.env
-ExecStart=/opt/kavita-epaper/venv/bin/uvicorn app.main:app --host ${KAVITA_EPAPER_HOST} --port ${KAVITA_EPAPER_PORT} --proxy-headers --forwarded-allow-ips '*'
+ExecStart=/opt/kavita-epaper/venv/bin/uvicorn app.main:app --host ${KAVITA_EPAPER_HOST} --port ${KAVITA_EPAPER_PORT} --proxy-headers --forwarded-allow-ips ${KAVITA_EPAPER_FORWARDED_ALLOW_IPS}
 Restart=on-failure
 RestartSec=5
 # Hardening
