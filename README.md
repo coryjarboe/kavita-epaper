@@ -70,6 +70,7 @@ D=$(mktemp -d)
 curl -fsSL "$LATEST" | tar -xzf - -C "$D"
 cd "$D"
 sudo bash ./deploy/install.sh
+cd - >/dev/null && rm -rf "$D"
 ```
 
 Pulls the latest tagged release. What most people want.
@@ -95,6 +96,7 @@ D=$(mktemp -d)
 tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C "$D"
 cd "$D"
 sudo bash ./deploy/install.sh
+cd - >/dev/null && rm -rf "$D"
 ```
 
 For offline installs, air-gapped environments, or pinning a specific version.
@@ -191,6 +193,7 @@ Older installers left `/opt/kavita-epaper` owned by the `kavita-epaper` service 
 D=$(mktemp -d)
 tar -xzf kavita-epaper-vX.Y.Z.tar.gz -C "$D"
 sudo bash "$D/deploy/update.sh" kavita-epaper-vX.Y.Z.tar.gz
+rm -rf "$D"
 ```
 
 It makes the install dir root-owned before reading anything in it, never executes `.env`, and replaces `/opt/kavita-epaper/update.sh` with itself. Don't use the installed `update.sh` for this upgrade: it finishes by handing `app/`, `requirements.txt` and `VERSION` back to the service user. After this, update as usual; from 0.7.15 on, `update.sh` hands off to the copy shipped in each new release by itself.

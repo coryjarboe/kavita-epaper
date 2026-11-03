@@ -149,13 +149,14 @@
   // .reader-inner has column-count:1, column-gap:20px, overflow:hidden in CSS.
   // Content that doesn't fit in the visible column flows into overflow columns
   // off to the right. We navigate between them with element.scrollLeft (NOT
-  // transform: translateX); this is what Kavita does. The browser's scroll
-  // engine snaps to the column boundaries it laid out, so we don't have to
-  // recompute them in JS. No more subpixel drift / edge bleed between columns.
+  // transform: translateX), as Kavita does.
   //
-  // pageStep = clientWidth + COLUMN_GAP, because the browser places columns at
+  // pageStep = W + COLUMN_GAP, because the browser places columns at
   //   col1: 0..W, col2: W+G..2W+G, col3: 2W+2G..3W+2G, ...
-  // so the scroll step between page starts is W + G.
+  // W must be the fractional column width. clientWidth is rounded to a whole
+  // pixel, so stepping by it is off by up to 0.5px per screen, and the error
+  // adds up: by screen 20 the column's left edge sits several px outside the
+  // visible area and the first letters of each line are cut off.
   var COLUMN_GAP = 20;  // px; MUST match column-gap in .reader-inner CSS
 
   var content = document.getElementById('reader-content');
@@ -178,7 +179,8 @@
     // touches scroll position now. Resetting to 0 lets recalcScreens() measure
     // a fresh scrollWidth without being confused by prior position.
     inner.scrollLeft = 0;
-    pageStep = inner.clientWidth + COLUMN_GAP;
+    var w = inner.getBoundingClientRect().width;  // fractional CSS px
+    pageStep = (w > 0 ? w : inner.clientWidth) + COLUMN_GAP;
   }
 
   function recalcScreens() {
@@ -193,10 +195,10 @@
   }
 
   function snapToScreen(animate) {
-    // No transition: e-ink renders animated scrolls as a smear. Native
-    // scrollLeft assignment lands at integer-pixel positions that align with
-    // the column boundaries the browser itself laid out.
-    inner.scrollLeft = currentScreen * pageStep;
+    // No transition: e-ink renders animated scrolls as a smear. Columns sit
+    // at fractional offsets; we round once from the screen index, so the error
+    // stays under 0.5px and never accumulates.
+    inner.scrollLeft = Math.round(currentScreen * pageStep);
   }
 
   function updateUi() {

@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.17] - fix reader left-edge clipping
+
+### Fixed
+- The reader cut off the first letters of each line further into a page.
+  It stepped between screens by the column width rounded to a whole
+  pixel, while the browser lays columns out at the fractional width, so
+  each page turn landed up to 0.5px off and the error added up (about
+  6px by screen 14). The step now uses the fractional width and each
+  scroll position is rounded once from the screen number, so the error
+  stays under 0.5px.
+
+### Docs
+- The README's Install (Options A and C) and Migration blocks now remove
+  the `mktemp -d` directory after use.
+
 ## [0.7.16] - keep Kavita apiKeys out of logs and the browser
 
 ### Security
