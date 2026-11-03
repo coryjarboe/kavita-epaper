@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.18] - optional reader keepalive
+
+### Added
+- `KAVITA_EPAPER_KEEPALIVE_SECONDS` (default `0`, off). When set, an open
+  reader page requests `/ping` this often while it is visible, pauses
+  while hidden, and pings once on becoming visible again. It is meant for
+  e-readers whose Wi-Fi sleeps between page loads and gets dropped by the
+  access point as idle. Values are clamped to 10..300; `25` is a good
+  start. Each ping wakes the radio, so it costs some battery.
+- `GET /ping` returns `204 No Content`. It takes no session, never reads
+  or sets the cookie and never calls Kavita. Its requests are left out of
+  the access log.
+
+### Notes
+- Nothing changes until you set the variable in
+  `/opt/kavita-epaper/.env` and restart the service.
+
 ## [0.7.17] - fix reader left-edge clipping
 
 ### Fixed

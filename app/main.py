@@ -54,6 +54,20 @@ SESSION_TTL = int(os.environ.get("KAVITA_EPAPER_SESSION_TTL", str(60 * 60 * 24 *
 # cover cache directory (optional grayscale-pre-rendered covers).
 COVER_CACHE_DIR = os.environ.get("KAVITA_EPAPER_COVER_CACHE", "/var/cache/kavita-epaper/covers")
 GRAYSCALE_COVERS = os.environ.get("KAVITA_EPAPER_GRAYSCALE", "true").lower() == "true"
+# Reader keepalive interval in seconds; 0 (default) turns it off. While a
+# reader page is visible it requests /ping this often, for e-readers whose
+# Wi-Fi sleeps between page loads and gets dropped by the access point as
+# idle. Clamped to 10..300.
+_keepalive_raw = os.environ.get("KAVITA_EPAPER_KEEPALIVE_SECONDS", "0").strip() or "0"
+try:
+    KEEPALIVE_SECONDS = int(_keepalive_raw)
+except ValueError:
+    KEEPALIVE_SECONDS = 0
+    logging.warning("KAVITA_EPAPER_KEEPALIVE_SECONDS=%r is not a number; keepalive is off.", _keepalive_raw)
+if KEEPALIVE_SECONDS > 0:
+    KEEPALIVE_SECONDS = max(10, min(KEEPALIVE_SECONDS, 300))
+else:
+    KEEPALIVE_SECONDS = 0
 
 if not SECRET_KEY:
     # Generate an ephemeral secret if not configured. This will invalidate
@@ -104,6 +118,7 @@ except Exception:  # noqa: BLE001
     APP_VERSION = "dev"
 
 templates.env.globals["APP_VERSION"] = APP_VERSION
+templates.env.globals["KEEPALIVE_SECONDS"] = KEEPALIVE_SECONDS
 
 _serializer = URLSafeSerializer(SECRET_KEY, salt="kavita-epaper-session")
 _signer = TimestampSigner(SECRET_KEY)
@@ -114,6 +129,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # endpoints take the apiKey as a query parameter, so INFO would write live
 # keys to the journal. Warnings and errors still come through.
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+class _DropPingAccessLog(logging.Filter):
+    """Keep the reader keepalive's /ping out of uvicorn's access log, which
+    would otherwise get a line every few seconds per open reader."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3:
+            return str(args[2]).split("?", 1)[0] != "/ping"
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_DropPingAccessLog())
 
 
 # ----- session helpers -------------------------------------------------------
@@ -660,6 +689,14 @@ async def download_volume(
         params={"volumeId": volume_id, "correlationId": secrets.token_hex(8)},
         session=session,
     )
+
+
+@app.get("/ping", include_in_schema=False)
+async def ping():
+    """Reader keepalive target. Takes no session: it never reads, refreshes
+    or sets the cookie and never calls Kavita, so it has no auth side effects.
+    Not logged at INFO (see _DropPingAccessLog)."""
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/sw.js")

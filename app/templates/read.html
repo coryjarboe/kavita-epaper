@@ -279,6 +279,35 @@
       imgs[i].addEventListener('error', recalcScreens);
     }
   }
+
+  // Optional keepalive (KAVITA_EPAPER_KEEPALIVE_SECONDS, off by default).
+  // Some e-readers put the Wi-Fi radio to sleep between page loads, the
+  // access point drops them as idle, and the next page load hangs. A tiny
+  // request every N seconds while this page is visible keeps the client
+  // associated. Paused while hidden; one ping on becoming visible again.
+  var KEEPALIVE_MS = {{ KEEPALIVE_SECONDS | int }} * 1000;
+  if (KEEPALIVE_MS > 0 && window.fetch) {
+    var keepaliveTimer = null;
+    var pingInFlight = false;
+    var ping = function () {
+      if (pingInFlight) return;  // a hung request on a dead link: don't pile up
+      pingInFlight = true;
+      fetch('/ping', { cache: 'no-store', credentials: 'omit' })
+        .catch(function () {})
+        .then(function () { pingInFlight = false; });
+    };
+    var keepaliveSync = function (pingNow) {
+      if (document.visibilityState === 'hidden') {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+      } else if (!keepaliveTimer) {
+        if (pingNow) ping();
+        keepaliveTimer = setInterval(ping, KEEPALIVE_MS);
+      }
+    };
+    document.addEventListener('visibilitychange', function () { keepaliveSync(true); });
+    keepaliveSync(false);  // the page load itself just used the network
+  }
 })();
 </script>
 {% endblock %}
