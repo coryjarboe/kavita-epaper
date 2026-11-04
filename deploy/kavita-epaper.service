@@ -20,6 +20,9 @@ EnvironmentFile=/opt/kavita-epaper/.env
 ExecStart=/opt/kavita-epaper/venv/bin/uvicorn app.main:app --host ${KAVITA_EPAPER_HOST} --port ${KAVITA_EPAPER_PORT} --proxy-headers --forwarded-allow-ips ${KAVITA_EPAPER_FORWARDED_ALLOW_IPS}
 Restart=on-failure
 RestartSec=5
+# The app exits 78 when its config can't work (e.g. a missing or weak
+# KAVITA_EPAPER_SECRET); retrying won't help, so don't restart-loop.
+RestartPreventExitStatus=78
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict

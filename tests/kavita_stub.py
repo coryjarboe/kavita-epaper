@@ -1,4 +1,5 @@
-"""Minimal fake Kavita for the kavita-epaper tests. Usage: kavita_stub.py PORT
+"""Minimal fake Kavita for the kavita-epaper tests.
+Usage: kavita_stub.py PORT [html]   ("html" = act as a non-Kavita web server)
 
 Users alice and bob (password "pw"). Tokens are JWT-shaped with Kavita-like
 claims; sizes are set via JWT_PAD / REFRESH_LEN env vars. Control endpoints
@@ -19,6 +20,24 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image
 
 PORT = int(sys.argv[1])
+HTML_MODE = len(sys.argv) > 2 and sys.argv[2] == "html"
+# Sign-in refusals in the shapes Kavita (ASP.NET) may use. Username -> reply.
+# A wrong password for alice or bob gets the plain-text 401 below, which is
+# what a real Kavita sent for an unknown user (checked once, 2026-11-03):
+# 401, text/plain; charset=utf-8, "Your credentials are not correct".
+REFUSALS = {
+    "locked": (401, "text/plain; charset=utf-8",
+               b"You've been locked out from too many authorization attempts. Please wait 10 minutes."),
+    "jsonstr": (401, "application/json", b'"Your account is disabled. Contact the server admin."'),
+    "problem": (400, "application/problem+json",
+                b'{"title":"One or more validation errors occurred.","status":400,'
+                b'"errors":{"Password":["The Password field is required."]}}'),
+    "leaky": (401, "text/plain", b"bad token eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl"),
+    "echo": (401, "text/plain", None),   # echoes the password back
+    "empty": (401, "text/plain", b""),
+    "boom": (500, "text/plain", b"Internal Server Error"),
+    "notoken": (200, "application/json", b'{"username":"notoken"}'),
+}
 JWT_PAD = int(os.environ.get("JWT_PAD", "0"))
 REFRESH_LEN = int(os.environ.get("REFRESH_LEN", "384"))
 USERS = {"alice": 1, "bob": 2}
@@ -87,12 +106,26 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(n) or b"{}")
 
+    def html(self):
+        body = b"<!doctype html><html><body>Welcome to nginx!</body></html>"
+        self.send(200, body, "text/html")
+
     def do_POST(self):
+        if HTML_MODE:
+            return self.html()
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         if u.path == "/api/Account/login":
             b = self.body()
-            if b.get("username") in USERS and b.get("password") == "pw":
+            name = b.get("username")
+            if name in REFUSALS:
+                code, ctype, body = REFUSALS[name]
+                if body is None:
+                    body = f"wrong password {b.get('password')}".encode()
+                return self.send(code, body, ctype)
+            if name in USERS and b.get("password") != "pw":
+                return self.send(401, b"Your credentials are not correct", "text/plain; charset=utf-8")
+            if name in USERS and b.get("password") == "pw":
                 t, r = issue(b["username"])
                 return self.send(200, {"username": b["username"], "token": t,
                                        "refreshToken": r, "apiKey": secrets.token_hex(18),
@@ -125,6 +158,8 @@ class H(BaseHTTPRequestHandler):
         return self.send(404, {})
 
     def do_GET(self):
+        if HTML_MODE:
+            return self.html()
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         if u.path == "/_hits":

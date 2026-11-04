@@ -436,8 +436,15 @@ button, input, select { font: inherit; color: inherit; }
   color: var(--paper);
   font-family: var(--font-chrome);
   font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  /* Messages carry URLs and file paths, which are case-sensitive. */
+  overflow-wrap: anywhere;
+}
+.alert-hint {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.85;
 }
 
 /* ---------- error ---------- */

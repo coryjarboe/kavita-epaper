@@ -4,6 +4,59 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.21] - clearer sign-in errors, required session secret
+
+### Changed
+- Sign-in errors say what went wrong and where to fix it:
+  - Kavita unreachable: "Couldn't reach Kavita at <url>: <reason>", where
+    the reason is connection refused, host name not found, TLS
+    certificate not trusted, no answer, or too slow, plus a pointer to
+    `KAVITA_BASE_URL` in `.env`. The URL is shown without any user info,
+    query or fragment.
+  - Something other than Kavita at that address (an HTML page, a 404,
+    a reply without a token): "That doesn't look like Kavita at <url>",
+    instead of an Internal Server Error or a bare "login failed".
+  - Kavita refuses the sign-in (400 or 401): Kavita's own message is
+    shown ("Kavita said: ..."), unless it looks like a token or contains
+    the password, in which case "Wrong username or password." is shown.
+  - Kavita answers with an error (for example 500): its status code.
+- The Kavita URL, the reason and the `.env` path are shown only to
+  clients with private or loopback addresses (10/8, 172.16/12,
+  192.168/16, 127/8, ::1, fc00::/7, fe80::/10), as resolved through
+  trusted proxies. Everyone else sees "Can't reach the Kavita server.
+  Check the server logs." The log always has the full URL (without
+  user info or query).
+- The login page builds these messages from a short error code in the
+  link, so a crafted link can no longer put arbitrary text there.
+- Connecting to Kavita gives up after 5 seconds (was 10, and 15 for
+  sign-in), so a wrong or unreachable address fails quickly.
+- The log line for a failed sign-in names the Kavita URL, the reason and
+  the error type (for example `timeout (ConnectTimeout <- TimeoutError)`).
+
+### Security
+- kavita-epaper refuses to start if `KAVITA_EPAPER_SECRET` is missing,
+  is the `env.example` placeholder, or is shorter than 32 characters,
+  and says how to generate one. It used to fall back to a random secret
+  (signing everyone out at every restart) and silently accepted the
+  placeholder. The service exits with status 78, and the unit's new
+  `RestartPreventExitStatus=78` stops systemd from retrying.
+  `KAVITA_EPAPER_SECRET_PREVIOUS` is not checked, since during a
+  rotation it is the old secret.
+- `update.sh` checks the secret before stopping the service. If it would
+  be refused, the update stops with the current version still running
+  and explains how to fix it. Only the length is checked; the value is
+  never printed. A secret set in a unit drop-in also counts.
+
+### Notes
+- Installs made with `install.sh` already have a 64-character secret and
+  need nothing. If you wrote `.env` by hand with a short secret, set a
+  new one first (this signs everyone out once): `update.sh` tells you.
+- `tests/test_login_errors.py` covers each sign-in error, who sees the
+  Kavita URL (including through a trusted proxy and a faked
+  `X-Forwarded-For`), and the secret check; the `update.sh` harness has
+  secret scenarios. Kavita's refusal format was checked against a real
+  Kavita with one sign-in for a nonexistent user.
+
 ## [0.7.20] - shorter browser cover cache, quieter update.sh
 
 ### Changed

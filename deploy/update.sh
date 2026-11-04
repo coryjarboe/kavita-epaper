@@ -169,6 +169,39 @@ if [ -f "$TMPDIR/extract/VERSION" ] && [ -f "$INSTALL_DIR/VERSION" ] && \
   exit 0
 fi
 
+# From 0.7.21 the app refuses to start without a real session secret. Check
+# it before anything is stopped, so a weak one leaves the current version
+# running. Only the length is looked at; the value is never printed. A secret
+# set in a unit drop-in (systemctl show -p Environment) counts too.
+SECRET_LINE=$(grep -E '^[[:space:]]*KAVITA_EPAPER_SECRET=' "$INSTALL_DIR/.env" 2>/dev/null | tail -1 || true)
+SECRET_VAL=${SECRET_LINE#*=}
+SECRET_VAL=${SECRET_VAL%\"}; SECRET_VAL=${SECRET_VAL#\"}
+SECRET_VAL=${SECRET_VAL%\'}; SECRET_VAL=${SECRET_VAL#\'}
+SECRET_ISSUE=""
+if [ -z "$SECRET_LINE" ]; then
+  UNIT_ENV=$(systemctl show "$SVC_NAME" -p Environment 2>/dev/null || true)
+  case "$UNIT_ENV" in
+    *KAVITA_EPAPER_SECRET=*) ;;
+    *) SECRET_ISSUE="is not set in $INSTALL_DIR/.env" ;;
+  esac
+  unset UNIT_ENV
+elif [ -z "$SECRET_VAL" ]; then
+  SECRET_ISSUE="is not set in $INSTALL_DIR/.env"
+elif [ "$SECRET_VAL" = "CHANGE_ME_TO_A_LONG_RANDOM_STRING" ]; then
+  SECRET_ISSUE="is still the placeholder from env.example"
+elif [ "${#SECRET_VAL}" -lt 32 ]; then
+  SECRET_ISSUE="is too short (${#SECRET_VAL} characters, need at least 32)"
+fi
+unset SECRET_LINE SECRET_VAL
+if [ -n "$SECRET_ISSUE" ]; then
+  echo "[✗] KAVITA_EPAPER_SECRET $SECRET_ISSUE; this version won't start with it." >&2
+  echo "    $SVC_NAME was not stopped and is still running $(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo 'the previous version')." >&2
+  echo "    Generate one: python3 -c 'import secrets; print(secrets.token_urlsafe(48))'" >&2
+  echo "    set KAVITA_EPAPER_SECRET=<that value> in $INSTALL_DIR/.env, then run this update again." >&2
+  echo "    A new secret signs everyone out once." >&2
+  exit 1
+fi
+
 # Service unit. Install the shipped unit when it differs from the installed
 # one. This point is only reached after the cross-project guard above, so
 # the unit belongs to this project. The new unit is verified before anything

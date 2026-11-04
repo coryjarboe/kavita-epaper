@@ -7,7 +7,7 @@
 # Usage: tests/update_harness.sh [work-dir]. See tests/README.md.
 set -u
 R=$(cd "$(dirname "$0")/.." && pwd)
-OLD_REF=${OLD_REF:-v0.7.18}
+OLD_REF=${OLD_REF:-v0.7.20}
 H=${1:-$(mktemp -d -t kavita-epaper-harness-XXXXXX)}
 rm -rf "$H"; mkdir -p "$H/bin" "$H/rel"
 echo "== work dir $H, old ref $OLD_REF"
@@ -26,6 +26,7 @@ cat > "$H/bin/systemctl" <<'EOF'
 #!/bin/bash
 echo "systemctl $*" >> "$H/calls"
 case "$1" in
+  show) [ -n "${SHOW_ENV:-}" ] && echo "Environment=$SHOW_ENV" || echo "Environment="; exit 0;;
   is-active) n=$(cat "$H/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$H/n"
              v=$(echo "$ACTIVE_SEQ" | cut -d, -f$n); [ "${v:-1}" = 1 ];;
   *) exit 0;;
@@ -64,7 +65,11 @@ setup() {  # $1 installed unit: old|new|none ; $2 installed update.sh: old|new ;
     { git -C "$R" show "$OLD_REF:requirements.txt"; echo "# harness: installed copy"; } > "$H/opt/kavita-epaper/requirements.txt"
   fi
   git -C "$R" show "$OLD_REF:VERSION" > "$H/opt/kavita-epaper/VERSION"
-  echo "KAVITA_EPAPER_SECRET=x" > "$H/opt/kavita-epaper/.env"
+  if [ "${SECRET_LINE-default}" = default ]; then
+    echo "KAVITA_EPAPER_SECRET=$(printf 's%.0s' $(seq 48))" > "$H/opt/kavita-epaper/.env"
+  else
+    printf '%s\n' "KAVITA_BASE_URL=http://127.0.0.1:5000" ${SECRET_LINE:+"$SECRET_LINE"} > "$H/opt/kavita-epaper/.env"
+  fi
   printf '#!/bin/bash\necho "pip $*" >> "$H/calls"\nexit ${PIP_RC:-0}\n' > "$H/opt/kavita-epaper/venv/bin/pip"
   chmod +x "$H/opt/kavita-epaper/venv/bin/pip"
   case $1 in old) cp "$H/unit-old" "$H/etc/kavita-epaper.service";; new) cp "$H/unit-new" "$H/etc/kavita-epaper.service";; esac
@@ -124,6 +129,27 @@ run "H1 handoff from $OLD_REF update.sh" old old good 1 0 changed handoff \
   0 "version=new app=new reqs=new unit=new backups=1 order=[pip>stop]" 'handing off'
 run "H2 handoff, pip FAILS" old old good 1 1 changed handoff \
   1 "version=old app=old reqs=old unit=old backups=0 order=[pip]" 'was not stopped and is still running'
+# Session secret pre-check (0.7.21): a weak or missing secret stops the
+# update before anything is stopped. SECRET_LINE replaces the .env secret
+# line ("" = no line); SHOW_ENV is what `systemctl show -p Environment` prints.
+SECRET_LINE="KAVITA_EPAPER_SECRET=too-short-secret" run "S1 secret too short" old new good 1 0 changed skip \
+  1 "version=old app=old reqs=old unit=old backups=0 order=[none]" 'is too short \(16 characters, need at least 32\)'
+SECRET_LINE="KAVITA_EPAPER_SECRET=CHANGE_ME_TO_A_LONG_RANDOM_STRING" run "S2 secret is the placeholder" old new good 1 0 changed skip \
+  1 "version=old app=old reqs=old unit=old backups=0 order=[none]" 'still the placeholder'
+SECRET_LINE="KAVITA_EPAPER_SECRET=\"$(printf 'q%.0s' $(seq 40))\"" run "S3 quoted 40-char secret is fine" old new good 1 0 changed skip \
+  0 "version=new app=new reqs=new unit=new backups=1 order=[pip>stop]" 'updated and running'
+SECRET_LINE="" run "S4 no secret anywhere" old new good 1 0 changed skip \
+  1 "version=old app=old reqs=old unit=old backups=0 order=[none]" 'is not set in .*/\.env'
+SECRET_LINE="" SHOW_ENV="KAVITA_EPAPER_SECRET=fromdropin" run "S5 secret only in a unit drop-in" old new good 1 0 changed skip \
+  0 "version=new app=new reqs=new unit=new backups=1 order=[pip>stop]" 'updated and running'
+SECRET_LINE="KAVITA_EPAPER_SECRET=short" run "S6 handoff from $OLD_REF, weak secret" old old good 1 0 changed handoff \
+  1 "version=old app=old reqs=old unit=old backups=0 order=[none]" 'was not stopped and is still running'
+if grep -q 'short' "$H/out" && ! grep -qE 'KAVITA_EPAPER_SECRET=short|too-short-secret' "$H/out"; then
+  echo "PASS  secret value never printed"; PASS=$((PASS+1))
+else
+  echo "FAIL  secret value printed or message missing"; FAIL=$((FAIL+1))
+fi
+
 if cmp -s "$H/opt/kavita-epaper/update.sh" "$H/old.sh"; then
   echo "PASS  after H2 the installed update.sh is still $OLD_REF's"; PASS=$((PASS+1))
 else

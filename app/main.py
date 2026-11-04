@@ -16,11 +16,15 @@ import contextlib
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
+import socket
+import ssl
+import sys
 import tempfile
 import time
 from typing import Any
@@ -89,15 +93,40 @@ if KEEPALIVE_SECONDS > 0:
 else:
     KEEPALIVE_SECONDS = 0
 
-if not SECRET_KEY:
-    # Generate an ephemeral secret if not configured. This will invalidate
-    # sessions on every restart, which is acceptable in dev but should be
-    # configured in production.
-    SECRET_KEY = secrets.token_urlsafe(48)
-    logging.warning(
-        "KAVITA_EPAPER_SECRET not set; using an ephemeral secret. "
-        "Sessions will be invalidated on every restart."
+# Where users fix settings, for messages. The .env sits next to app/.
+ENV_FILE_HINT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+
+# The session secret must be real: it encrypts every user's Kavita tokens.
+# Refuse to start rather than run with none, the env.example placeholder, or
+# a short one. Exit status 78 (EX_CONFIG) tells systemd not to restart-loop
+# (RestartPreventExitStatus=78 in the unit). KAVITA_EPAPER_SECRET_PREVIOUS is
+# not checked: during a rotation it is the old, possibly short, secret.
+SECRET_MIN_LENGTH = 32
+_SECRET_PLACEHOLDER = "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+_EXIT_CONFIG = 78
+
+
+def _secret_problem(secret: str) -> str | None:
+    if not secret:
+        return "is not set"
+    if secret == _SECRET_PLACEHOLDER:
+        return "is still the placeholder from env.example"
+    if len(secret) < SECRET_MIN_LENGTH:
+        return f"is too short ({len(secret)} characters, need at least {SECRET_MIN_LENGTH})"
+    return None
+
+
+_secret_issue = _secret_problem(SECRET_KEY)
+if _secret_issue:
+    sys.stderr.write(
+        f"kavita-epaper: refusing to start: KAVITA_EPAPER_SECRET {_secret_issue}.\n"
+        "  Generate one with:  python3 -c 'import secrets; print(secrets.token_urlsafe(48))'\n"
+        f"  Set KAVITA_EPAPER_SECRET=<that value> in {ENV_FILE_HINT}, then restart:\n"
+        "  systemctl restart kavita-epaper\n"
+        "  A new secret signs everyone out once.\n"
     )
+    sys.stderr.flush()
+    sys.exit(_EXIT_CONFIG)
 
 # Try to make grayscale cover pre-rendering available, but don't require Pillow.
 try:
@@ -123,10 +152,12 @@ app.mount(
     name="static",
 )
 
-# Single shared httpx client. Long timeout for downloads.
+# Single shared httpx client. Long read timeout for downloads; a short
+# connect timeout so an unreachable Kavita fails within a few seconds.
+KAVITA_CONNECT_TIMEOUT = 5.0
 _http = httpx.AsyncClient(
     base_url=KAVITA_BASE_URL,
-    timeout=httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=10.0),
+    timeout=httpx.Timeout(connect=KAVITA_CONNECT_TIMEOUT, read=120.0, write=60.0, pool=10.0),
 )
 
 # Read the installed version (used for cache-busting static asset URLs).
@@ -380,10 +411,164 @@ async def root(request: Request, session: Session = Depends(get_session)):
     return RedirectResponse("/library", status_code=302)
 
 
+# ----- sign-in errors ---------------------------------------------------------
+# The sign-in POST redirects to /login with an error code (and at most a
+# reason code, a status number or Kavita's own message); the login page
+# builds the text. The Kavita URL in the text comes from the config, never
+# from the query string, and never includes user info or a query.
+
+_NET_REASONS = {
+    "refused": "connection refused (nothing is listening at that address and port)",
+    "dns": "host name not found",
+    "tls": "its TLS certificate isn't trusted",
+    "timeout": "no answer within {connect:g} seconds (wrong address, host down, or a firewall)",
+    "slow": "it accepted the connection but didn't answer in time",
+    "failed": "network error",
+}
+_JWTISH = re.compile(r"eyJ[\w-]{8,}|[A-Za-z0-9+/_=-]{40,}")
+# Clients that may see the internal Kavita URL and .env path in sign-in
+# errors. The client address is the one uvicorn resolved, so behind a proxy
+# it is the forwarded address only when the proxy is trusted
+# (KAVITA_EPAPER_FORWARDED_ALLOW_IPS).
+_LOCAL_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
+    "::1/128", "fc00::/7", "fe80::/10"))
+
+
+def _client_is_local(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in _LOCAL_NETS)
+
+
+def _kavita_url_for_display() -> str:
+    """KAVITA_BASE_URL without user info, query or fragment."""
+    try:
+        u = httpx.URL(KAVITA_BASE_URL)
+    except Exception:  # noqa: BLE001
+        return "(invalid KAVITA_BASE_URL)"
+    host = f"[{u.host}]" if ":" in u.host else u.host
+    port = f":{u.port}" if u.port else ""
+    return f"{u.scheme}://{host}{port}{u.path.rstrip('/')}"
+
+
+def _net_reason(exc: BaseException) -> str:
+    """Classify a failed request to Kavita by the exceptions in its chain."""
+    seen = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, (httpx.ConnectTimeout, httpx.PoolTimeout)):
+            return "timeout"
+        if isinstance(e, (httpx.ReadTimeout, httpx.WriteTimeout)):
+            return "slow"
+        if isinstance(e, ConnectionRefusedError):
+            return "refused"
+        if isinstance(e, socket.gaierror):
+            return "dns"
+        if isinstance(e, ssl.SSLError):
+            return "tls"
+        e = e.__cause__ or e.__context__
+    return "failed"
+
+
+def _exc_names(exc: BaseException) -> str:
+    """'ConnectTimeout <- TimeoutError', for the log."""
+    names, seen = [], set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen and len(names) < 4:
+        seen.add(id(e))
+        names.append(type(e).__name__)
+        e = e.__cause__ or e.__context__
+    return " <- ".join(names)
+
+
+def _kavita_message(r: httpx.Response, password: str) -> str | None:
+    """Kavita's own reason for refusing a sign-in, if it gave a short, safe
+    one: a JSON string, {"message": ...}, ASP.NET problem details, or plain
+    text. Dropped if it looks like a token or contains the password."""
+    text = None
+    try:
+        body = r.json()
+    except ValueError:
+        body = None
+        if r.headers.get("content-type", "").startswith("text/plain"):
+            text = r.text
+    if isinstance(body, str):
+        text = body
+    elif isinstance(body, dict):
+        errors = body.get("errors")
+        if isinstance(errors, dict):
+            for v in errors.values():
+                if isinstance(v, list) and v and isinstance(v[0], str):
+                    text = v[0]
+                    break
+        if not text:
+            for key in ("message", "detail", "title"):
+                if isinstance(body.get(key), str):
+                    text = body[key]
+                    break
+    if not text:
+        return None
+    text = " ".join(text.split())[:200]
+    if not text or _JWTISH.search(text) or (password and password in text):
+        return None
+    return text
+
+
+def _login_error_text(error: str | None, reason: str | None, status: str | None,
+                      msg: str | None, local: bool) -> tuple[str | None, str | None]:
+    """(message, hint) for the login page. Only local clients (see
+    _client_is_local) see the Kavita URL, the reason and the .env path."""
+    if not error:
+        return None, None
+    url = _kavita_url_for_display()
+    hint = f"Check KAVITA_BASE_URL in {ENV_FILE_HINT}, then restart kavita-epaper."
+    code = status if status and status.isdigit() and len(status) == 3 else None
+    if not local and error in ("unreachable", "not_kavita"):
+        return "Can't reach the Kavita server. Check the server logs.", None
+    if not local and error == "kavita_error":
+        return f"The Kavita server returned an error (HTTP {code or '?'}). Try again later.", None
+    if error == "unreachable":
+        why = _NET_REASONS.get(reason or "", _NET_REASONS["failed"]).format(connect=KAVITA_CONNECT_TIMEOUT)
+        if reason == "slow":
+            hint = "Kavita may be busy, for example scanning a library. Try again in a moment."
+        return f"Couldn't reach Kavita at {url}: {why}.", hint
+    if error == "not_kavita":
+        detail = f" (HTTP {code} for the sign-in request)" if code else " (the reply wasn't a Kavita sign-in response)"
+        return f"That doesn't look like Kavita at {url}{detail}.", hint
+    if error == "kavita_error":
+        return f"Kavita at {url} returned an error (HTTP {code or '?'}). Try again, or check Kavita's logs.", None
+    if error == "rejected":
+        if msg:
+            return f"Kavita said: {' '.join(msg.split())[:200]}", None
+        if code == "401":
+            return "Wrong username or password.", None
+        return f"Kavita refused the sign-in (HTTP {code or '?'}).", None
+    return "Sign-in failed.", None
+
+
+def _login_redirect(**params: str) -> RedirectResponse:
+    query = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items() if v)
+    return RedirectResponse(f"/login?{query}", status_code=302)
+
+
 @app.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request, error: str | None = None):
+async def login_form(
+    request: Request,
+    error: str | None = None,
+    reason: str | None = None,
+    status: str | None = None,
+    msg: str | None = None,
+):
+    message, hint = _login_error_text(error, reason, status, msg, _client_is_local(request))
     return templates.TemplateResponse(
-        "login.html", {"request": request, "error": error}
+        "login.html", {"request": request, "error": message, "error_hint": hint}
     )
 
 
@@ -393,24 +578,38 @@ async def login_submit(
     username: str = Form(...),
     password: str = Form(...),
 ):
+    url = _kavita_url_for_display()
     try:
         r = await _http.post(
             "/api/Account/login",
             json={"username": username, "password": password, "apiKey": ""},
-            timeout=15.0,
+            timeout=httpx.Timeout(15.0, connect=KAVITA_CONNECT_TIMEOUT),
         )
     except httpx.HTTPError as e:
-        logger.warning("login network error: %s", e)
-        return RedirectResponse(
-            f"/login?error={quote('could not reach kavita')}", status_code=302
-        )
+        reason = _net_reason(e)
+        logger.warning("login: could not reach Kavita at %s: %s (%s)", url, reason, _exc_names(e))
+        return _login_redirect(error="unreachable", reason=reason)
 
+    if r.status_code in (400, 401):
+        return _login_redirect(error="rejected", status=str(r.status_code),
+                               msg=_kavita_message(r, password) or "")
+    if r.status_code in (404, 405):
+        logger.warning("login: %s answered HTTP %d for /api/Account/login; is KAVITA_BASE_URL right?",
+                       url, r.status_code)
+        return _login_redirect(error="not_kavita", status=str(r.status_code))
     if r.status_code != 200:
-        # Kavita returns 401 for bad creds.
-        msg = "wrong username or password" if r.status_code == 401 else "login failed"
-        return RedirectResponse(f"/login?error={quote(msg)}", status_code=302)
+        logger.warning("login: Kavita at %s answered HTTP %d", url, r.status_code)
+        return _login_redirect(error="kavita_error", status=str(r.status_code))
 
-    user = r.json()
+    try:
+        user = r.json()
+    except ValueError:
+        user = None
+    if not isinstance(user, dict) or not isinstance(user.get("token"), str):
+        logger.warning("login: reply from %s isn't a Kavita sign-in response (content-type %s)",
+                       url, r.headers.get("content-type", "none"))
+        return _login_redirect(error="not_kavita")
+
     session = Session(None)
     session.update_from_user_dto(user)
     response = RedirectResponse("/library", status_code=302)

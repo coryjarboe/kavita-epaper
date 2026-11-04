@@ -162,12 +162,13 @@ The defaults suit a trusted home LAN. For anything beyond that:
   - Several proxies: a comma-separated list, no spaces (`192.0.2.10,192.0.2.11`). CIDR ranges like `192.0.2.0/28` work too. IP addresses only, not hostnames.
   - Requests through a trusted proxy are logged with the real client IP (port `0`), and `KAVITA_EPAPER_COOKIE_SECURE=auto` sees the proxy's HTTPS. Anyone else is logged as they connect and their forwarded headers are ignored.
   - If the list misses your proxy, the logs show the proxy's IP and `auto` treats requests as plain HTTP, so the cookie loses its `Secure` flag.
+  - Sign-in errors show the internal Kavita URL only to clients with private or loopback addresses. With `*`, a remote client can fake a private address and see it: another reason to set this.
 - **Use HTTPS.** Put a TLS reverse proxy in front (see [Reverse proxy](#reverse-proxy)). Keep `KAVITA_EPAPER_COOKIE_SECURE` at `auto`, or `true` if you only ever use HTTPS (with `true`, sign-in won't stick over plain HTTP).
 - **Don't expose the app port.**
   - Proxy on the same host: set `KAVITA_EPAPER_HOST=127.0.0.1`.
   - Proxy elsewhere: firewall port `8095` (`KAVITA_EPAPER_PORT`) to the proxy only, e.g. `sudo ufw allow from 192.0.2.10 to any port 8095 proto tcp` and no other rule for that port.
 - **Use a long random secret.**
-  - `install.sh` generates `KAVITA_EPAPER_SECRET`. To make one: `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`.
+  - `install.sh` generates `KAVITA_EPAPER_SECRET`. To make one: `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`. The service refuses to start if it's missing, the `env.example` placeholder, or shorter than 32 characters.
   - It encrypts session cookies and keys the cover cache. Changing it signs everyone out, and covers are fetched again.
   - To rotate without signing everyone out: move the current value to `KAVITA_EPAPER_SECRET_PREVIOUS`, set a new `KAVITA_EPAPER_SECRET`, restart. Old cookies are re-issued under the new secret the next time they open a page.
   - After `KAVITA_EPAPER_SESSION_TTL` (30 days by default), remove `KAVITA_EPAPER_SECRET_PREVIOUS` and restart. Anyone who hasn't opened a page since the rotation is signed out then.
@@ -289,7 +290,7 @@ Users sign in again after the move, because the new install generates a new sess
 | `KAVITA_BASE_URL`            | `http://127.0.0.1:5000`         | Kavita API address (server-to-server). Change if Kavita isn't local. |
 | `KAVITA_EPAPER_HOST`         | `0.0.0.0`                       | Interface to bind. `127.0.0.1` is loopback only.     |
 | `KAVITA_EPAPER_PORT`         | `8095`                          | TCP port to listen on.                               |
-| `KAVITA_EPAPER_SECRET`       | auto-generated                  | Encrypts session cookies. Changing it signs everyone out; see below. |
+| `KAVITA_EPAPER_SECRET`       | auto-generated                  | Encrypts session cookies. At least 32 characters; the service won't start without one. Changing it signs everyone out; see below. |
 | `KAVITA_EPAPER_SECRET_PREVIOUS` | unset                        | Old secret during a rotation; its cookies are still accepted. |
 | `KAVITA_EPAPER_COOKIE_SECURE`| `auto`                          | `auto` follows request scheme. Or pin `true`/`false`.|
 | `KAVITA_EPAPER_SESSION_TTL`  | `2592000` (30d)                 | Session lifetime in seconds.                         |

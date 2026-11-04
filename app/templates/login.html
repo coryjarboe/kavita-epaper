@@ -12,7 +12,7 @@
     </div>
 
     {% if error %}
-    <div class="alert" role="alert">{{ error }}</div>
+    <div class="alert" role="alert">{{ error }}{% if error_hint %}<br><span class="alert-hint">{{ error_hint }}</span>{% endif %}</div>
     {% endif %}
 
     <form method="post" action="/login" class="login-form" autocomplete="on">
