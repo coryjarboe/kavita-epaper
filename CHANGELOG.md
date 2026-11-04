@@ -4,6 +4,64 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.22] - guided install, Kavita over HTTPS, /healthz, pinned dependencies
+
+### Added
+- `install.sh` asks for Kavita's address when run in a terminal (default
+  `http://127.0.0.1:5000`), or takes `--kavita-url URL` or
+  `KAVITA_BASE_URL` from the environment, and checks it before writing
+  it. Up to three tries in a terminal, then "continue anyway?". When not
+  in a terminal an unreachable Kavita only gives a warning.
+- `install.sh` waits up to 20 seconds for the service to be active and
+  the login page to answer before printing the check mark; otherwise it
+  exits 1 with the exit status and a `journalctl` hint (and says when the
+  app refused a setting, exit status 78). The summary lists the
+  machine's real LAN addresses, says to sign in with your Kavita
+  username and password, and whether Kavita was reachable.
+- `install.sh` refuses to run as non-root or with Python older than
+  3.10, with a message saying what to do.
+- `--overwrite-env` replaces an existing `.env`: the old one is backed up
+  to `/var/backups/kavita-epaper.env.<timestamp>` (root, 600, newest 5
+  kept) and its secret is kept, so nobody is signed out. Without it an
+  existing `.env` is never touched, and `--kavita-url` is refused with
+  instructions.
+- `KAVITA_CA_BUNDLE`: a PEM file with a private CA for Kavita over
+  HTTPS, trusted in addition to the system CAs. `KAVITA_TLS_VERIFY=false`
+  turns certificate checks off (not recommended; warned at every
+  start). A missing or unusable CA file, or a bad `KAVITA_TLS_VERIFY`,
+  stops the app with exit status 78 and a message.
+- `GET /healthz`: `200 ok` when the app is up and Kavita answers, `503`
+  with a reason code (for example `kavita: refused`) when not. No
+  sign-in, never shows the Kavita URL, checks Kavita at most every 10
+  seconds, and stays out of the access log.
+- `constraints.txt` pins the tested versions of every package
+  `requirements.txt` pulls in. `install.sh` and `update.sh` pass it to
+  pip with `-c`, so every install gets the same set.
+- `app/kavita_check.py`: one Kavita check (`/api/health` answers `Ok`,
+  `/api/admin/exists` answers true or false, both without signing in)
+  and the failure reasons, used by sign-in errors, `/healthz` and
+  `install.sh` (`python -m app.kavita_check URL`).
+
+### Changed
+- `update.sh` treats a change to `constraints.txt` like a change to
+  `requirements.txt`: pip runs, with `-c constraints.txt`, before the
+  service is stopped.
+- Sign-in error for an untrusted TLS certificate points to
+  `KAVITA_CA_BUNDLE`.
+- README: a five-step Quick start at the top (root without `sudo` is
+  fine), Add to home screen, Kavita under a sub-path, Kavita over HTTPS,
+  the health check, Python 3.10 or newer, and what isn't tested yet. The
+  migration sections moved to `MIGRATION.md`, which the release tarball
+  now includes. `env.example` no longer says to copy it by hand.
+
+### Notes
+- Updating from 0.7.21 runs pip (constraints.txt is new) before stopping
+  the service, which moves several indirect packages to the tested
+  versions. No setting changes and nobody has to sign in again.
+- Tested on Debian 12 (Python 3.11) only. Debian 11 (Python 3.9) won't
+  work; unprivileged LXC without nesting, Ubuntu, Python 3.10 and 3.12+
+  are untested.
+
 ## [0.7.21] - clearer sign-in errors, required session secret
 
 ### Changed

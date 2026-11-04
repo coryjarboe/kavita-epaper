@@ -230,12 +230,23 @@ fi
 # pip fails, the update stops here and that version keeps serving. Adding
 # packages under a running process is safe: the new code only loads them at
 # the restart below.
+# constraints.txt (from 0.7.22) pins the tested versions of everything
+# requirements.txt pulls in; a change to either file runs pip.
+same_file() {  # both missing, or both present and identical
+  if [ -f "$1" ] || [ -f "$2" ]; then
+    [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2"
+  fi
+}
+PIP_CONSTRAINTS=()
+[ -f "$TMPDIR/extract/constraints.txt" ] && PIP_CONSTRAINTS=(-c "$TMPDIR/extract/constraints.txt")
 if [ -f "$INSTALL_DIR/requirements.txt" ] && \
-   diff -q "$INSTALL_DIR/requirements.txt" "$TMPDIR/extract/requirements.txt" >/dev/null 2>&1; then
-  echo "[+] requirements.txt unchanged, skipping pip"
+   same_file "$INSTALL_DIR/requirements.txt" "$TMPDIR/extract/requirements.txt" && \
+   same_file "$INSTALL_DIR/constraints.txt" "$TMPDIR/extract/constraints.txt"; then
+  echo "[+] requirements.txt and constraints.txt unchanged, skipping pip"
 else
-  echo "[+] requirements.txt changed, updating venv before stopping $SVC_NAME"
-  if ! "$INSTALL_DIR/venv/bin/pip" install --disable-pip-version-check --quiet --upgrade -r "$TMPDIR/extract/requirements.txt"; then
+  echo "[+] requirements.txt or constraints.txt changed, updating venv before stopping $SVC_NAME"
+  if ! "$INSTALL_DIR/venv/bin/pip" install --disable-pip-version-check --quiet --upgrade \
+       -r "$TMPDIR/extract/requirements.txt" ${PIP_CONSTRAINTS[@]+"${PIP_CONSTRAINTS[@]}"}; then
     echo "[✗] pip install failed; $SVC_NAME was not stopped and is still running $(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo 'the previous version')" >&2
     echo "    nothing else was changed (pip may have added packages to the venv)" >&2
     exit 1
@@ -248,6 +259,12 @@ systemctl stop "$SVC_NAME" || true
 echo "[+] syncing app/ → $INSTALL_DIR/app/"
 rsync -a --delete "$TMPDIR/extract/app/" "$INSTALL_DIR/app/"
 cp "$TMPDIR/extract/requirements.txt" "$INSTALL_DIR/requirements.txt"
+if [ -f "$TMPDIR/extract/constraints.txt" ]; then
+  cp "$TMPDIR/extract/constraints.txt" "$INSTALL_DIR/constraints.txt"
+  chown root:root "$INSTALL_DIR/constraints.txt"
+else
+  rm -f "$INSTALL_DIR/constraints.txt"
+fi
 
 [ -f "$TMPDIR/extract/VERSION" ] && cp "$TMPDIR/extract/VERSION" "$INSTALL_DIR/VERSION"
 

@@ -34,7 +34,7 @@ jobs:
         run: |
           OUT="/tmp/kavita-epaper-v${VERSION}.tar.gz"
           tar -czf "$OUT" --owner=0 --group=0 \
-            ./.gitignore ./CHANGELOG.md ./LICENSE ./README.md ./VERSION ./requirements.txt ./deploy ./app
+            ./.gitignore ./CHANGELOG.md ./LICENSE ./MIGRATION.md ./README.md ./VERSION ./requirements.txt ./constraints.txt ./deploy ./app
           sha256sum "$OUT"
           echo "TARBALL=$OUT" >> "$GITHUB_ENV"
 

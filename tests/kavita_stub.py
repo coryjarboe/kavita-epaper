@@ -1,5 +1,7 @@
 """Minimal fake Kavita for the kavita-epaper tests.
-Usage: kavita_stub.py PORT [html]   ("html" = act as a non-Kavita web server)
+Usage: kavita_stub.py PORT [html] [--tls CERT KEY]
+  html   act as a non-Kavita web server (HTML 200 for everything)
+  --tls  serve HTTPS with that certificate and key
 
 Users alice and bob (password "pw"). Tokens are JWT-shaped with Kavita-like
 claims; sizes are set via JWT_PAD / REFRESH_LEN env vars. Control endpoints
@@ -20,7 +22,8 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image
 
 PORT = int(sys.argv[1])
-HTML_MODE = len(sys.argv) > 2 and sys.argv[2] == "html"
+HTML_MODE = "html" in sys.argv[2:]
+TLS = sys.argv[sys.argv.index("--tls") + 1:sys.argv.index("--tls") + 3] if "--tls" in sys.argv else None
 # Sign-in refusals in the shapes Kavita (ASP.NET) may use. Username -> reply.
 # A wrong password for alice or bob gets the plain-text 401 below, which is
 # what a real Kavita sent for an unknown user (checked once, 2026-11-03):
@@ -165,6 +168,11 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/_hits":
             with lock:
                 return self.send(200, dict(hits))
+        # What a real Kavita answers without signing in (checked 2026-11-03).
+        if u.path.lower() == "/api/health":
+            return self.send(200, b"Ok", "text/plain; charset=utf-8")
+        if u.path.lower() == "/api/admin/exists":
+            return self.send(200, b"true", "application/json; charset=utf-8")
         user = self.user()
         if user is None:
             return self.send(401, {})
@@ -184,4 +192,10 @@ class H(BaseHTTPRequestHandler):
         return self.send(404, {})
 
 
-ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+server = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+if TLS:
+    import ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(TLS[0], TLS[1])
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+server.serve_forever()

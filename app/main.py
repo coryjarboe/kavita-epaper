@@ -11,6 +11,7 @@ opaque session cookie. EPUB downloads are streamed through this app.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import hashlib
@@ -22,8 +23,6 @@ import logging
 import os
 import re
 import secrets
-import socket
-import ssl
 import sys
 import tempfile
 import time
@@ -38,6 +37,8 @@ from fastapi.templating import Jinja2Templates
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+from . import kavita_check
 
 # ----- config ---------------------------------------------------------------
 
@@ -152,12 +153,27 @@ app.mount(
     name="static",
 )
 
+# TLS to Kavita: KAVITA_CA_BUNDLE adds CA certificates to the system ones;
+# KAVITA_TLS_VERIFY=false turns checks off (warned at startup). A setting that
+# can't work stops the app, like a bad secret.
+try:
+    KAVITA_TLS_VERIFY, _tls_warning = kavita_check.tls_verify_from_env()
+except kavita_check.TLSConfigError as _e:
+    sys.stderr.write(
+        f"kavita-epaper: refusing to start: {_e}.\n"
+        f"  Fix it in {ENV_FILE_HINT} (see the README's Security section), then restart:\n"
+        "  systemctl restart kavita-epaper\n"
+    )
+    sys.stderr.flush()
+    sys.exit(_EXIT_CONFIG)
+
 # Single shared httpx client. Long read timeout for downloads; a short
 # connect timeout so an unreachable Kavita fails within a few seconds.
-KAVITA_CONNECT_TIMEOUT = 5.0
+KAVITA_CONNECT_TIMEOUT = kavita_check.CONNECT_TIMEOUT
 _http = httpx.AsyncClient(
     base_url=KAVITA_BASE_URL,
     timeout=httpx.Timeout(connect=KAVITA_CONNECT_TIMEOUT, read=120.0, write=60.0, pool=10.0),
+    verify=KAVITA_TLS_VERIFY,
 )
 
 # Read the installed version (used for cache-busting static asset URLs).
@@ -197,13 +213,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class _DropPingAccessLog(logging.Filter):
-    """Keep the reader keepalive's /ping out of uvicorn's access log, which
-    would otherwise get a line every few seconds per open reader."""
+    """Keep the reader keepalive's /ping and health probes' /healthz out of
+    uvicorn's access log, which would otherwise get a line every few seconds."""
+
+    QUIET = ("/ping", "/healthz")
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple) and len(args) >= 3:
-            return str(args[2]).split("?", 1)[0] != "/ping"
+            return str(args[2]).split("?", 1)[0] not in self.QUIET
         return True
 
 
@@ -417,14 +435,6 @@ async def root(request: Request, session: Session = Depends(get_session)):
 # builds the text. The Kavita URL in the text comes from the config, never
 # from the query string, and never includes user info or a query.
 
-_NET_REASONS = {
-    "refused": "connection refused (nothing is listening at that address and port)",
-    "dns": "host name not found",
-    "tls": "its TLS certificate isn't trusted",
-    "timeout": "no answer within {connect:g} seconds (wrong address, host down, or a firewall)",
-    "slow": "it accepted the connection but didn't answer in time",
-    "failed": "network error",
-}
 _JWTISH = re.compile(r"eyJ[\w-]{8,}|[A-Za-z0-9+/_=-]{40,}")
 # Clients that may see the internal Kavita URL and .env path in sign-in
 # errors. The client address is the one uvicorn resolved, so behind a proxy
@@ -447,45 +457,11 @@ def _client_is_local(request: Request) -> bool:
 
 
 def _kavita_url_for_display() -> str:
-    """KAVITA_BASE_URL without user info, query or fragment."""
-    try:
-        u = httpx.URL(KAVITA_BASE_URL)
-    except Exception:  # noqa: BLE001
-        return "(invalid KAVITA_BASE_URL)"
-    host = f"[{u.host}]" if ":" in u.host else u.host
-    port = f":{u.port}" if u.port else ""
-    return f"{u.scheme}://{host}{port}{u.path.rstrip('/')}"
+    return kavita_check.display_url(KAVITA_BASE_URL)
 
 
-def _net_reason(exc: BaseException) -> str:
-    """Classify a failed request to Kavita by the exceptions in its chain."""
-    seen = set()
-    e: BaseException | None = exc
-    while e is not None and id(e) not in seen:
-        seen.add(id(e))
-        if isinstance(e, (httpx.ConnectTimeout, httpx.PoolTimeout)):
-            return "timeout"
-        if isinstance(e, (httpx.ReadTimeout, httpx.WriteTimeout)):
-            return "slow"
-        if isinstance(e, ConnectionRefusedError):
-            return "refused"
-        if isinstance(e, socket.gaierror):
-            return "dns"
-        if isinstance(e, ssl.SSLError):
-            return "tls"
-        e = e.__cause__ or e.__context__
-    return "failed"
-
-
-def _exc_names(exc: BaseException) -> str:
-    """'ConnectTimeout <- TimeoutError', for the log."""
-    names, seen = [], set()
-    e: BaseException | None = exc
-    while e is not None and id(e) not in seen and len(names) < 4:
-        seen.add(id(e))
-        names.append(type(e).__name__)
-        e = e.__cause__ or e.__context__
-    return " <- ".join(names)
+_net_reason = kavita_check.net_reason
+_exc_names = kavita_check.exc_names
 
 
 def _kavita_message(r: httpx.Response, password: str) -> str | None:
@@ -535,9 +511,12 @@ def _login_error_text(error: str | None, reason: str | None, status: str | None,
     if not local and error == "kavita_error":
         return f"The Kavita server returned an error (HTTP {code or '?'}). Try again later.", None
     if error == "unreachable":
-        why = _NET_REASONS.get(reason or "", _NET_REASONS["failed"]).format(connect=KAVITA_CONNECT_TIMEOUT)
+        why = kavita_check.reason_text(reason if reason in kavita_check.NET_REASONS else "failed")
         if reason == "slow":
             hint = "Kavita may be busy, for example scanning a library. Try again in a moment."
+        elif reason == "tls":
+            hint = (f"If Kavita uses a private CA, set KAVITA_CA_BUNDLE in {ENV_FILE_HINT} "
+                    "(see the README's Security section), then restart kavita-epaper.")
         return f"Couldn't reach Kavita at {url}: {why}.", hint
     if error == "not_kavita":
         detail = f" (HTTP {code} for the sign-in request)" if code else " (the reply wasn't a Kavita sign-in response)"
@@ -944,6 +923,32 @@ async def download_volume(
         params={"volumeId": volume_id, "correlationId": secrets.token_hex(8)},
         session=session,
     )
+
+
+# /healthz: 200 "ok" when this app is up and Kavita answers like Kavita,
+# otherwise 503 with a short reason code. No sign-in, so it never shows the
+# Kavita URL. Results are reused for a few seconds so frequent probes don't
+# turn into a stream of requests to Kavita.
+HEALTH_CACHE_SECONDS = 10.0
+_health_cache: tuple[float, bool, str] | None = None
+_health_lock = asyncio.Lock()
+
+
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    global _health_cache
+    async with _health_lock:
+        now = time.monotonic()
+        if _health_cache is None or now - _health_cache[0] >= HEALTH_CACHE_SECONDS:
+            ok, reason, detail = await kavita_check.check(_http)
+            if not ok and (_health_cache is None or _health_cache[1]):
+                logger.warning("healthz: Kavita at %s: %s (%s)", _kavita_url_for_display(), reason, detail)
+            _health_cache = (now, ok, reason)
+        _, ok, reason = _health_cache
+    headers = {"Cache-Control": "no-store"}
+    if ok:
+        return Response("ok\n", media_type="text/plain", headers=headers)
+    return Response(f"kavita: {reason}\n", media_type="text/plain", status_code=503, headers=headers)
 
 
 @app.get("/ping", include_in_schema=False)
@@ -1445,6 +1450,8 @@ async def _proxy_download(*, path: str, params: dict, session: Session) -> Respo
 
 @app.on_event("startup")
 async def _startup():
+    if _tls_warning:
+        logger.warning(_tls_warning)
     _prune_cover_cache()
 
 

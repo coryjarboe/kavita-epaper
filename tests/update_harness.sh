@@ -38,10 +38,11 @@ chmod +x "$H/bin/systemctl"
 # packed with the same file list as the release, plus a typo'd unit variant.
 mk_tarball() {  # $1 name, $2 unit sed expression (optional)
   local T="$H/tree-$1"; rm -rf "$T"; mkdir -p "$T"
-  (cd "$R" && git ls-files -z | xargs -0 -I{} cp --parents {} "$T/")
+  # tracked files plus new, not-yet-committed ones (not ignored files)
+  (cd "$R" && git ls-files -z --cached --others --exclude-standard | xargs -0 -I{} cp --parents {} "$T/")
   cp "$H/new.sh" "$T/deploy/update.sh"
   [ -n "${2:-}" ] && sed -i "$2" "$T/deploy/kavita-epaper.service"
-  (cd "$T" && tar -czf "$H/rel/$1.tar.gz" --owner=0 --group=0 ./.gitignore ./CHANGELOG.md ./LICENSE ./README.md ./VERSION ./requirements.txt ./deploy ./app)
+  (cd "$T" && tar -czf "$H/rel/$1.tar.gz" --owner=0 --group=0 ./.gitignore ./CHANGELOG.md ./LICENSE ./MIGRATION.md ./README.md ./VERSION ./requirements.txt ./constraints.txt ./deploy ./app)
 }
 mk_tarball good
 mk_tarball typo 's/^ExecStart=/ExecStartt=/'
@@ -59,8 +60,10 @@ setup() {  # $1 installed unit: old|new|none ; $2 installed update.sh: old|new ;
   rm -rf "$H/opt" "$H/etc" "$H/backups" "$H/calls" "$H/n"
   mkdir -p "$H/opt/kavita-epaper/venv/bin" "$H/etc"
   git -C "$R" archive "$OLD_REF" app | tar -x -C "$H/opt/kavita-epaper"
-  if [ "$3" = same ]; then
+  if [ "$3" = same ] || [ "$3" = consold ]; then
     cp "$R/requirements.txt" "$H/opt/kavita-epaper/requirements.txt"
+    [ -f "$R/constraints.txt" ] && cp "$R/constraints.txt" "$H/opt/kavita-epaper/constraints.txt"
+    [ "$3" = consold ] && echo "# harness: older constraints" >> "$H/opt/kavita-epaper/constraints.txt"
   else  # always differs from the release, even if requirements did not change since OLD_REF
     { git -C "$R" show "$OLD_REF:requirements.txt"; echo "# harness: installed copy"; } > "$H/opt/kavita-epaper/requirements.txt"
   fi
@@ -125,6 +128,13 @@ run "P2 requirements changed, pip FAILS" old new good 1 1 changed skip \
   1 "version=old app=old reqs=old unit=old backups=0 order=[pip]" 'was not stopped and is still running'
 run "P3 requirements unchanged" new new good 1 0 same skip \
   0 "version=new app=new reqs=new unit=new backups=0 order=[stop]" 'unchanged, skipping pip'
+run "C1 only constraints.txt changed" new new good 1 0 consold skip \
+  0 "version=new app=new reqs=new unit=new backups=0 order=[pip>stop]" 'or constraints.txt changed, updating venv before stopping'
+if grep -q "^pip install .* -c .*/extract/constraints.txt" "$H/calls" && cmp -s "$H/opt/kavita-epaper/constraints.txt" "$R/constraints.txt"; then
+  echo "PASS  C1 pip got -c constraints.txt; installed constraints.txt replaced"; PASS=$((PASS+1))
+else
+  echo "FAIL  C1 pip call or installed constraints.txt"; FAIL=$((FAIL+1)); grep '^pip' "$H/calls" | sed 's/^/      /'
+fi
 run "H1 handoff from $OLD_REF update.sh" old old good 1 0 changed handoff \
   0 "version=new app=new reqs=new unit=new backups=1 order=[pip>stop]" 'handing off'
 run "H2 handoff, pip FAILS" old old good 1 1 changed handoff \
