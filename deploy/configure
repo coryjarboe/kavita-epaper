@@ -1,0 +1,472 @@
+#!/usr/bin/python3
+"""configure: change kavita-epaper's settings safely.
+
+    sudo /opt/kavita-epaper/configure                 # menu (in a terminal)
+    sudo /opt/kavita-epaper/configure show
+    sudo /opt/kavita-epaper/configure kavita-url http://192.0.2.20:5000 [--force]
+    sudo /opt/kavita-epaper/configure trusted-proxies 192.0.2.10[,192.0.2.0/28] | any
+    sudo /opt/kavita-epaper/configure cookie-secure auto|true|false
+    sudo /opt/kavita-epaper/configure cover-ttl SECONDS
+    sudo /opt/kavita-epaper/configure ca-bundle /etc/kavita-epaper/kavita-ca.pem | none
+    sudo /opt/kavita-epaper/configure kavita-tls-verify on|off
+    sudo /opt/kavita-epaper/configure new-secret [--keep-sessions]
+    sudo /opt/kavita-epaper/configure forget-previous-secret
+
+Every change is checked first, .env is backed up to
+/var/backups/kavita-epaper.env.<timestamp> (root, 600, newest 5 kept) and
+rewritten atomically, the service is restarted, and the change is kept only if
+the service is active and the login page answers; otherwise the backup is put
+back. Whether Kavita answers is reported, never a reason to undo.
+
+Standard library only, run by the system python3, so it works whatever the
+installed app version or venv is. Secrets are never printed.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import os
+import re
+import secrets
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+INSTALL_DIR = "/opt/kavita-epaper"
+ENV_FILE = INSTALL_DIR + "/.env"
+BACKUP_DIR = "/var/backups"
+SVC = "kavita-epaper.service"
+SERVICE_USER = "kavita-epaper"
+HEALTH_WAIT = 20
+KEEP_BACKUPS = 5
+PLACEHOLDER = "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+DEFAULTS = {
+    "KAVITA_BASE_URL": "http://127.0.0.1:5000",
+    "KAVITA_EPAPER_HOST": "0.0.0.0",
+    "KAVITA_EPAPER_PORT": "8095",
+    "KAVITA_EPAPER_FORWARDED_ALLOW_IPS": "*",
+    "KAVITA_EPAPER_COOKIE_SECURE": "auto",
+    "KAVITA_EPAPER_COVER_TTL": "86400",
+    "KAVITA_CA_BUNDLE": "",
+    "KAVITA_TLS_VERIFY": "true",
+}
+
+
+class Refused(Exception):
+    """A value that can't be used; nothing was changed."""
+
+
+# ---------------------------------------------------------------- .env
+def read_env() -> tuple[list[str], dict[str, str]]:
+    with open(ENV_FILE) as f:
+        lines = f.read().splitlines()
+    values: dict[str, str] = {}
+    for line in lines:
+        m = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line)
+        if m:
+            v = m.group(2).strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            values[m.group(1)] = v
+    return lines, values
+
+
+def edited(lines: list[str], changes: dict[str, str | None]) -> list[str]:
+    """Set (or, for None, remove) each key: replace its first active line,
+    else its commented template line (#KEY=), else append. Other active
+    lines for the key are dropped so exactly one assignment remains."""
+    out = list(lines)
+    for key, value in changes.items():
+        active = [i for i, l in enumerate(out) if re.match(rf"^\s*{key}=", l)]
+        template = [i for i, l in enumerate(out) if re.match(rf"^\s*#\s*{key}=", l)]
+        if value is None:
+            out = [l for i, l in enumerate(out) if i not in active]
+            continue
+        if active:
+            out[active[0]] = f"{key}={value}"
+            drop = set(active[1:])
+            out = [l for i, l in enumerate(out) if i not in drop]
+        elif template:
+            out[template[0]] = f"{key}={value}"
+        else:
+            out.append(f"{key}={value}")
+    return out
+
+
+def write_env_atomic(lines: list[str]) -> None:
+    fd, tmp = tempfile.mkstemp(dir=INSTALL_DIR, prefix=".env.new.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o600)
+        os.chown(tmp, 0, 0)
+        os.replace(tmp, ENV_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def backup_env() -> str:
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    path = f"{BACKUP_DIR}/kavita-epaper.env.{time.strftime('%Y%m%d-%H%M%S')}"
+    if os.path.exists(path):
+        path += f"-{os.getpid()}"
+    with open(ENV_FILE, "rb") as src:
+        data = src.read()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chown(path, 0, 0)
+    olds = sorted(n for n in os.listdir(BACKUP_DIR) if n.startswith("kavita-epaper.env."))
+    for name in olds[:-KEEP_BACKUPS]:
+        os.unlink(os.path.join(BACKUP_DIR, name))
+    return path
+
+
+# ---------------------------------------------------------------- service
+def systemctl(*args: str) -> int:
+    return subprocess.run(["systemctl", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+
+
+def app_url(values: dict[str, str]) -> str:
+    host = values.get("KAVITA_EPAPER_HOST") or DEFAULTS["KAVITA_EPAPER_HOST"]
+    port = values.get("KAVITA_EPAPER_PORT") or DEFAULTS["KAVITA_EPAPER_PORT"]
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    elif host in ("::", "[::]"):
+        host = "[::1]"
+    elif ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}"
+
+
+def healthy(values: dict[str, str]) -> bool:
+    url = app_url(values) + "/login"
+    for _ in range(HEALTH_WAIT * 2):
+        if systemctl("is-active", "--quiet", SVC) == 0:
+            try:
+                urllib.request.urlopen(url, timeout=2)
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+        if systemctl("is-failed", "--quiet", SVC) == 0:
+            return False
+        time.sleep(0.5)
+    return False
+
+
+def restart() -> None:
+    systemctl("reset-failed", SVC)
+    systemctl("restart", SVC)
+
+
+def kavita_status(values: dict[str, str]) -> str | None:
+    """None when the app reports Kavita reachable, else its /healthz reason."""
+    try:
+        urllib.request.urlopen(app_url(values) + "/healthz", timeout=15)
+        return None
+    except urllib.error.HTTPError as e:
+        return e.read().decode(errors="replace").strip() or f"HTTP {e.code}"
+    except Exception as e:  # noqa: BLE001
+        return f"no answer from /healthz ({type(e).__name__})"
+
+
+# ---------------------------------------------------------------- Kavita check
+def tls_context(values: dict[str, str]) -> ssl.SSLContext:
+    if (values.get("KAVITA_TLS_VERIFY") or "true").lower() == "false":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    ctx = ssl.create_default_context()
+    bundle = values.get("KAVITA_CA_BUNDLE") or ""
+    if bundle:
+        ctx.load_verify_locations(cafile=bundle)
+    return ctx
+
+
+def check_kavita(url: str, values: dict[str, str]) -> tuple[bool, str]:
+    """Same check as the app: /api/health answers Ok, /api/admin/exists a bool."""
+    ctx = tls_context(values)
+    try:
+        with urllib.request.urlopen(url + "/api/health", timeout=10, context=ctx) as r:
+            if r.read().decode(errors="replace").strip() != "Ok":
+                return False, "it answers, but not like Kavita (or a Kavita too old to have /api/health)"
+        with urllib.request.urlopen(url + "/api/admin/exists", timeout=10, context=ctx) as r:
+            if not isinstance(json.loads(r.read() or b"null"), bool):
+                return False, "it answers, but not like Kavita"
+    except urllib.error.HTTPError as e:
+        return False, f"it answers, but not like Kavita (HTTP {e.code})"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        reason = getattr(e, "reason", e)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return False, "its TLS certificate isn't trusted (see: configure ca-bundle)"
+        if isinstance(reason, ConnectionRefusedError):
+            return False, "connection refused (nothing is listening at that address and port)"
+        if isinstance(reason, socket.gaierror):
+            return False, "host name not found"
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return False, "no answer (wrong address, host down, or a firewall)"
+        return False, f"network error ({type(reason).__name__})"
+    return True, "Kavita answers"
+
+
+# ---------------------------------------------------------------- validation
+def v_kavita_url(raw: str) -> str:
+    url = raw.strip()
+    if "://" not in url:
+        url = "http://" + url
+    u = urllib.parse.urlsplit(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise Refused(f"{raw!r} isn't an http:// or https:// address")
+    if u.username or u.password or u.query or u.fragment:
+        raise Refused("leave out user names, passwords, ?query and #fragment")
+    return url.rstrip("/")
+
+
+def v_proxies(raw: str) -> str:
+    raw = raw.strip()
+    if raw in ("any", "*"):
+        return "*"
+    if not raw or " " in raw:
+        raise Refused("give IP addresses or CIDR ranges separated by commas, no spaces, or 'any'")
+    out = []
+    for part in raw.split(","):
+        try:
+            out.append(str(ipaddress.ip_network(part, strict=False)) if "/" in part else str(ipaddress.ip_address(part)))
+        except ValueError:
+            raise Refused(f"{part!r} isn't an IP address or CIDR range (hostnames don't work here)") from None
+    return ",".join(out)
+
+
+def v_choice(raw: str, allowed: tuple[str, ...], name: str) -> str:
+    v = raw.strip().lower()
+    if v not in allowed:
+        raise Refused(f"{name} must be one of: {', '.join(allowed)}")
+    return v
+
+
+def v_ttl(raw: str) -> str:
+    if not raw.strip().isdigit():
+        raise Refused("cover-ttl is a whole number of seconds (0 turns the disk cache off)")
+    return str(int(raw))
+
+
+def v_ca_bundle(raw: str) -> str | None:
+    if raw.strip().lower() == "none":
+        return None
+    path = os.path.abspath(raw.strip())
+    real = os.path.realpath(path)
+    if not os.path.isfile(real):
+        raise Refused(f"{path} is not a file")
+    if real == "/root" or real.startswith(("/root/", "/home/")):
+        raise Refused("the service can't see /root or /home; put it in /etc/kavita-epaper/ instead")
+    try:
+        ssl.create_default_context().load_verify_locations(cafile=real)
+    except (ssl.SSLError, OSError, ValueError):
+        raise Refused(f"{path} has no usable PEM certificates") from None
+    try:
+        can_read = subprocess.run(["runuser", "-u", SERVICE_USER, "--", "test", "-r", real],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        can_read = True
+    if not can_read:
+        raise Refused(f"the {SERVICE_USER} user can't read {path} (try chmod 644 and a readable directory)")
+    return path
+
+
+def secret_ok(s: str) -> bool:
+    return len(s) >= 32 and s != PLACEHOLDER
+
+
+# ---------------------------------------------------------------- applying
+def apply(changes: dict[str, str | None], what: str) -> int:
+    lines, before = read_env()
+    new_lines = edited(lines, changes)
+    if new_lines == lines:
+        print(f"[=] {what}: already set, nothing to do")
+        return 0
+    backup = backup_env()
+    print(f"[+] backed up .env to {backup}")
+    write_env_atomic(new_lines)
+    _, after = read_env()
+    print(f"[+] {what}; restarting {SVC}")
+    restart()
+    if healthy(after):
+        print(f"[✓] {what}; kavita-epaper is running")
+        reason = kavita_status(after)
+        if reason:
+            print(f"[!] kavita-epaper can't reach Kavita right now ({reason}); the change is kept.")
+        return 0
+    print(f"[✗] kavita-epaper didn't come up after the change (not active, or {app_url(after)}/login "
+          f"didn't answer within {HEALTH_WAIT} s). Putting the previous .env back.", file=sys.stderr)
+    with open(backup) as f:
+        write_env_atomic(f.read().splitlines())
+    restart()
+    if healthy(before):
+        print("[✗] change undone; running with the previous settings. "
+              f"Check: journalctl -u {SVC} -n 30 --no-pager", file=sys.stderr)
+    else:
+        print(f"[✗] change undone, but kavita-epaper doesn't come up with the previous settings either. "
+              f"Check: journalctl -u {SVC} -n 30 --no-pager", file=sys.stderr)
+    return 1
+
+
+def show() -> int:
+    _, v = read_env()
+    def val(k):
+        return v.get(k) or f"{DEFAULTS[k] or '(unset)'} (default)"
+    secret = v.get("KAVITA_EPAPER_SECRET", "")
+    print(f"settings in {ENV_FILE}:")
+    print(f"  Kavita address       KAVITA_BASE_URL={val('KAVITA_BASE_URL')}")
+    print(f"  Kavita CA bundle     KAVITA_CA_BUNDLE={val('KAVITA_CA_BUNDLE')}")
+    print(f"  Kavita TLS check     KAVITA_TLS_VERIFY={val('KAVITA_TLS_VERIFY')}")
+    print(f"  trusted proxies      KAVITA_EPAPER_FORWARDED_ALLOW_IPS={val('KAVITA_EPAPER_FORWARDED_ALLOW_IPS')}")
+    print(f"  cookie Secure flag   KAVITA_EPAPER_COOKIE_SECURE={val('KAVITA_EPAPER_COOKIE_SECURE')}")
+    print(f"  cover cache TTL      KAVITA_EPAPER_COVER_TTL={val('KAVITA_EPAPER_COVER_TTL')}")
+    print(f"  listen address       {val('KAVITA_EPAPER_HOST')}:{val('KAVITA_EPAPER_PORT')}")
+    state = (f"set, {len(secret)} characters" if secret_ok(secret)
+             else "NOT USABLE (missing, placeholder or short); run: configure new-secret")
+    print(f"  session secret       {state}")
+    print(f"  previous secret      {'set (rotation in progress)' if v.get('KAVITA_EPAPER_SECRET_PREVIOUS') else 'not set'}")
+    active = systemctl("is-active", "--quiet", SVC) == 0
+    print(f"service: {'active' if active else 'not active'}")
+    if active:
+        reason = kavita_status(v)
+        print(f"Kavita:  {'reachable' if reason is None else 'not reachable (' + reason + ')'}")
+    return 0
+
+
+COMMANDS = ("show", "kavita-url", "trusted-proxies", "cookie-secure", "cover-ttl", "ca-bundle",
+            "kavita-tls-verify", "new-secret", "forget-previous-secret")
+
+
+def run(cmd: str, args: list[str]) -> int:
+    if cmd not in COMMANDS:
+        raise Refused(f"unknown command {cmd!r}; run: configure --help")
+    _, cur = read_env()
+    if cmd == "show":
+        return show()
+    if cmd == "kavita-url":
+        force = "--force" in args
+        rest = [a for a in args if a != "--force"]
+        if len(rest) != 1:
+            raise Refused("usage: configure kavita-url URL [--force]")
+        url = v_kavita_url(rest[0])
+        ok, why = check_kavita(url, cur)
+        print(f"[{'+' if ok else '!'}] {url}: {why}")
+        if not ok and not force:
+            raise Refused("not saved. Fix the address, or add --force to save it anyway")
+        return apply({"KAVITA_BASE_URL": url}, f"Kavita address set to {url}")
+    if len(args) != 1 and cmd not in ("new-secret", "forget-previous-secret"):  # one VALUE
+        raise Refused(f"usage: configure {cmd} VALUE")
+    if cmd == "trusted-proxies":
+        value = v_proxies(args[0])
+        if value == "*":
+            print("[!] '*' lets any client set X-Forwarded-For and X-Forwarded-Proto (see the README's Security section)")
+        return apply({"KAVITA_EPAPER_FORWARDED_ALLOW_IPS": value}, f"trusted proxies set to {value}")
+    if cmd == "cookie-secure":
+        value = v_choice(args[0], ("auto", "true", "false"), "cookie-secure")
+        if value == "true":
+            print("[!] with true, sign-in only sticks over HTTPS")
+        return apply({"KAVITA_EPAPER_COOKIE_SECURE": value}, f"cookie Secure flag set to {value}")
+    if cmd == "cover-ttl":
+        value = v_ttl(args[0])
+        return apply({"KAVITA_EPAPER_COVER_TTL": value}, f"cover cache TTL set to {value} s")
+    if cmd == "ca-bundle":
+        value = v_ca_bundle(args[0])
+        return apply({"KAVITA_CA_BUNDLE": value}, f"Kavita CA bundle {'set to ' + value if value else 'removed'}")
+    if cmd == "kavita-tls-verify":
+        value = {"on": "true", "off": "false", "true": "true", "false": "false"}.get(args[0].strip().lower())
+        if value is None:
+            raise Refused("kavita-tls-verify takes on or off")
+        if value == "false":
+            print("[!] off: Kavita's certificate isn't checked, so anything between kavita-epaper and Kavita "
+                  "can read the traffic, passwords included. Prefer: configure ca-bundle")
+        return apply({"KAVITA_TLS_VERIFY": value}, f"Kavita TLS check turned {'on' if value == 'true' else 'off'}")
+    if cmd == "new-secret":
+        if [a for a in args if a != "--keep-sessions"]:
+            raise Refused("usage: configure new-secret [--keep-sessions]")
+        old = cur.get("KAVITA_EPAPER_SECRET", "")
+        changes: dict[str, str | None] = {"KAVITA_EPAPER_SECRET": secrets.token_urlsafe(48)}
+        if "--keep-sessions" in args and secret_ok(old):
+            changes["KAVITA_EPAPER_SECRET_PREVIOUS"] = old
+            what = "new session secret set; the old one is kept as KAVITA_EPAPER_SECRET_PREVIOUS so nobody is signed out"
+        else:
+            changes["KAVITA_EPAPER_SECRET_PREVIOUS"] = None
+            what = "new session secret set; everyone signs in again"
+        rc = apply(changes, what)
+        if rc == 0 and "KAVITA_EPAPER_SECRET_PREVIOUS" in changes and changes["KAVITA_EPAPER_SECRET_PREVIOUS"]:
+            print("    After 30 days (KAVITA_EPAPER_SESSION_TTL), run: configure forget-previous-secret")
+        return rc
+    if cmd == "forget-previous-secret":
+        return apply({"KAVITA_EPAPER_SECRET_PREVIOUS": None}, "previous session secret removed")
+    raise Refused(f"unknown command {cmd!r}; run configure --help")
+
+
+MENU = [
+    ("kavita-url", "Kavita address (e.g. http://192.0.2.20:5000)"),
+    ("trusted-proxies", "trusted proxy IPs (e.g. 192.0.2.10, or any)"),
+    ("cookie-secure", "cookie Secure flag (auto, true, false)"),
+    ("cover-ttl", "cover cache TTL in seconds"),
+    ("ca-bundle", "Kavita CA bundle path (or none)"),
+    ("kavita-tls-verify", "Kavita TLS check (on, off)"),
+    ("new-secret", "new session secret"),
+]
+
+
+def menu() -> int:
+    show()
+    print()
+    for i, (_, label) in enumerate(MENU, 1):
+        print(f"  {i}) {label}")
+    print("  q) quit")
+    choice = input("Change which? ").strip().lower()
+    if choice in ("", "q"):
+        return 0
+    if not choice.isdigit() or not 1 <= int(choice) <= len(MENU):
+        raise Refused("pick a number from the list")
+    cmd = MENU[int(choice) - 1][0]
+    if cmd == "new-secret":
+        keep = input("Keep current sessions signed in (rotation)? [Y/n] ").strip().lower() not in ("n", "no")
+        return run(cmd, ["--keep-sessions"] if keep else [])
+    return run(cmd, [input("New value: ")])
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if os.geteuid() != 0:
+        print("configure must run as root: sudo /opt/kavita-epaper/configure ...", file=sys.stderr)
+        return 1
+    if not os.path.isfile(ENV_FILE):
+        print(f"{ENV_FILE} doesn't exist; run install.sh first", file=sys.stderr)
+        return 1
+    try:
+        if not argv:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                return menu()
+            print(__doc__.strip())
+            return 2
+        return run(argv[0], argv[1:])
+    except Refused as e:
+        print(f"[✗] {e}. Nothing was changed.", file=sys.stderr)
+        return 2
+    except (EOFError, KeyboardInterrupt):
+        print("\nNothing was changed.", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -94,8 +94,10 @@ if KEEPALIVE_SECONDS > 0:
 else:
     KEEPALIVE_SECONDS = 0
 
-# Where users fix settings, for messages. The .env sits next to app/.
+# Where users fix settings, for messages: .env and the configure command sit
+# next to app/.
 ENV_FILE_HINT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+CONFIGURE_HINT = os.path.join(os.path.dirname(ENV_FILE_HINT), "configure")
 
 # The session secret must be real: it encrypts every user's Kavita tokens.
 # Refuse to start rather than run with none, the env.example placeholder, or
@@ -121,9 +123,9 @@ _secret_issue = _secret_problem(SECRET_KEY)
 if _secret_issue:
     sys.stderr.write(
         f"kavita-epaper: refusing to start: KAVITA_EPAPER_SECRET {_secret_issue}.\n"
-        "  Generate one with:  python3 -c 'import secrets; print(secrets.token_urlsafe(48))'\n"
-        f"  Set KAVITA_EPAPER_SECRET=<that value> in {ENV_FILE_HINT}, then restart:\n"
-        "  systemctl restart kavita-epaper\n"
+        f"  Set a new one with:  sudo {CONFIGURE_HINT} new-secret\n"
+        "  (or generate one with python3 -c 'import secrets; print(secrets.token_urlsafe(48))',\n"
+        f"  set KAVITA_EPAPER_SECRET=<that value> in {ENV_FILE_HINT} and run: systemctl restart kavita-epaper)\n"
         "  A new secret signs everyone out once.\n"
     )
     sys.stderr.flush()
@@ -161,8 +163,8 @@ try:
 except kavita_check.TLSConfigError as _e:
     sys.stderr.write(
         f"kavita-epaper: refusing to start: {_e}.\n"
-        f"  Fix it in {ENV_FILE_HINT} (see the README's Security section), then restart:\n"
-        "  systemctl restart kavita-epaper\n"
+        f"  Fix it with:  sudo {CONFIGURE_HINT} ca-bundle <file.pem|none>  (or kavita-tls-verify on)\n"
+        f"  or in {ENV_FILE_HINT}, then: systemctl restart kavita-epaper\n"
     )
     sys.stderr.flush()
     sys.exit(_EXIT_CONFIG)
@@ -504,7 +506,7 @@ def _login_error_text(error: str | None, reason: str | None, status: str | None,
     if not error:
         return None, None
     url = _kavita_url_for_display()
-    hint = f"Check KAVITA_BASE_URL in {ENV_FILE_HINT}, then restart kavita-epaper."
+    hint = f"Check the Kavita address: sudo {CONFIGURE_HINT} kavita-url <address>"
     code = status if status and status.isdigit() and len(status) == 3 else None
     if not local and error in ("unreachable", "not_kavita"):
         return "Can't reach the Kavita server. Check the server logs.", None
@@ -515,8 +517,8 @@ def _login_error_text(error: str | None, reason: str | None, status: str | None,
         if reason == "slow":
             hint = "Kavita may be busy, for example scanning a library. Try again in a moment."
         elif reason == "tls":
-            hint = (f"If Kavita uses a private CA, set KAVITA_CA_BUNDLE in {ENV_FILE_HINT} "
-                    "(see the README's Security section), then restart kavita-epaper.")
+            hint = (f"If Kavita uses a private CA: sudo {CONFIGURE_HINT} ca-bundle <file.pem> "
+                    "(see the README's Kavita over HTTPS section).")
         return f"Couldn't reach Kavita at {url}: {why}.", hint
     if error == "not_kavita":
         detail = f" (HTTP {code} for the sign-in request)" if code else " (the reply wasn't a Kavita sign-in response)"

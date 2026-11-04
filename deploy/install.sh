@@ -67,7 +67,7 @@ fi
 # Kavita address given on the command line.
 if [ -f "${ENV_FILE}" ] && [ -z "${OVERWRITE_ENV}" ] && [ -n "${KAVITA_URL_GIVEN}" ]; then
   echo "[✗] ${ENV_FILE} already exists, so the Kavita address you gave was not used." >&2
-  echo "    To change it, edit KAVITA_BASE_URL in ${ENV_FILE}, then run: systemctl restart kavita-epaper" >&2
+  echo "    To change it: sudo ${INSTALL_DIR}/configure kavita-url ${KAVITA_URL_GIVEN}" >&2
   echo "    Or rerun with --overwrite-env to write a new .env (the current one is backed up to" >&2
   echo "    ${BACKUP_DIR}, and its secret is kept so nobody is signed out). Nothing was changed." >&2
   exit 1
@@ -140,23 +140,44 @@ rsync -a --delete \
   "${SYNC_FILES[@]}" \
   "${INSTALL_DIR}/"
 
-# Also drop the updater + version stamp into the install dir for future use
-install -m 755 "${SCRIPT_DIR}/update.sh" "${INSTALL_DIR}/update.sh"
+# Also drop update.sh and configure into the install dir. They are only ever
+# replaced by versions at least as new (an older tarball never downgrades
+# them); pre-0.7.23 copies have no version and count as older.
+tool_version() { [ -f "$1" ] || return 0; sed -n 's/^UPDATE_SH_VERSION="\([0-9.]*\)"$/\1/p' "$1" | head -1 || true; }
+NEW_TOOLS=$(tool_version "${SCRIPT_DIR}/update.sh")
+OLD_TOOLS=$(tool_version "${INSTALL_DIR}/update.sh")
+if [ -z "${OLD_TOOLS}" ] || [ "$(printf '%s\n%s\n' "${OLD_TOOLS}" "${NEW_TOOLS:-0}" | sort -V | tail -1)" = "${NEW_TOOLS:-0}" ]; then
+  install -m 755 "${SCRIPT_DIR}/update.sh" "${INSTALL_DIR}/update.sh"
+  [ -f "${SCRIPT_DIR}/configure" ] && install -m 755 "${SCRIPT_DIR}/configure" "${INSTALL_DIR}/configure"
+else
+  echo "[+] keeping the installed update.sh and configure (${OLD_TOOLS}, newer than this release's)"
+fi
 if [ -f "${REPO_DIR}/VERSION" ]; then
   cp "${REPO_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
 fi
 
-# 4) venv + deps, with the tested versions of everything pulled in
-if [ ! -d "${INSTALL_DIR}/venv" ]; then
-  echo "[+] creating venv"
-  python3 -m venv "${INSTALL_DIR}/venv"
-fi
+# 4) venv + deps, with the tested versions of everything pulled in. From
+# 0.7.23 the venv lives in venvs/<id> (one per set of dependencies) and venv
+# is a symlink to it, which lets update.sh build the next one beside it and
+# switch atomically. An existing venv (symlink or older real directory) is
+# kept and repaired in place; update.sh moves an older one into venvs/.
 CONSTRAINTS=()
 [ -f "${INSTALL_DIR}/constraints.txt" ] && CONSTRAINTS=(-c "${INSTALL_DIR}/constraints.txt")
+if [ ! -e "${INSTALL_DIR}/venv" ]; then
+  VENV_ID=$({ cat "${INSTALL_DIR}/requirements.txt"; echo "--"; cat "${INSTALL_DIR}/constraints.txt" 2>/dev/null || true
+              echo "--"; python3 -c 'import sys; print(sys.version)'; } | sha256sum | cut -c1-12)
+  echo "[+] creating venv venvs/${VENV_ID}"
+  mkdir -p "${INSTALL_DIR}/venvs"
+  rm -rf "${INSTALL_DIR}/venvs/${VENV_ID}"
+  python3 -m venv "${INSTALL_DIR}/venvs/${VENV_ID}"
+  ln -s "venvs/${VENV_ID}" "${INSTALL_DIR}/venv"
+  NEW_VENV=1
+fi
 echo "[+] installing Python packages"
 "${INSTALL_DIR}/venv/bin/pip" install --disable-pip-version-check --quiet --upgrade pip
 "${INSTALL_DIR}/venv/bin/pip" install --disable-pip-version-check --quiet \
   -r "${INSTALL_DIR}/requirements.txt" ${CONSTRAINTS[@]+"${CONSTRAINTS[@]}"}
+[ -n "${NEW_VENV:-}" ] && touch "${INSTALL_DIR}/venv/.complete"
 
 # 5) cache + releases dirs
 mkdir -p "${CACHE_DIR}"
@@ -351,9 +372,9 @@ if [ -n "${KAVITA_OK}" ]; then
   echo "    Kavita:    reachable at ${KAVITA_URL}"
 else
   echo "    Kavita:    not reachable at ${KAVITA_URL}"
-  echo "               Fix KAVITA_BASE_URL in ${ENV_FILE}, then: systemctl restart kavita-epaper"
+  echo "               Fix it: sudo ${INSTALL_DIR}/configure kavita-url <address>"
 fi
-echo "    Settings:  ${ENV_FILE}"
+echo "    Settings:  sudo ${INSTALL_DIR}/configure  (or edit ${ENV_FILE})"
 echo "    Logs:      journalctl -u kavita-epaper -f"
 echo
 echo "For HTTPS, put a reverse proxy in front (NPM, Caddy, Traefik): see the"

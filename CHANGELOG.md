@@ -4,6 +4,60 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.23] - all-or-nothing updates, --rollback, configure
+
+### Added
+- `/opt/kavita-epaper/configure` changes the common settings safely:
+  `show`, `kavita-url` (checked first; `--force` to save an unreachable
+  one), `trusted-proxies`, `cookie-secure`, `cover-ttl`, `ca-bundle`,
+  `kavita-tls-verify`, `new-secret [--keep-sessions]` and
+  `forget-previous-secret`, or a menu when run in a terminal. Each change
+  is validated, `.env` is backed up to
+  `/var/backups/kavita-epaper.env.<timestamp>` (root, 600, newest 5
+  kept) and rewritten atomically, the service is restarted, and the old
+  `.env` is put back if it doesn't come up. Kavita being unreachable is
+  reported, never undone. Secrets are never printed. It uses only the
+  standard library and the system Python, so it works whatever app
+  version or venv is installed.
+- `update.sh --status` shows the current and kept previous versions,
+  their venvs, and what `--rollback` would do.
+- `update.sh --rollback [--yes]` switches to the kept previous version
+  (app, `VERSION`, requirements, venv link and unit) without a tarball or
+  network. It says which way it switches and asks first (`--yes` when
+  not in a terminal), toggles (a second run switches forward), and is
+  checked and undone like an update.
+
+### Changed
+- `update.sh` is all or nothing. Dependencies go into a new venv in
+  `venvs/<id>`, built beside the running one, which is never modified;
+  `venv` becomes a symlink switched atomically. The current version moves
+  to `previous/` in the stop window. The update is kept only if the
+  service is active and the login page answers within 20 seconds
+  (Kavita being down only gives a warning); otherwise everything,
+  including the unit, `update.sh` and `configure`, is put back and the
+  old version started again, and the new code is kept in `failed/` until
+  the next update. Every step is journalled, and the next run undoes an
+  interrupted update first. This also ends the 0.7.22 deploy's harmless
+  shutdown error, where the old process loaded newer package files.
+- `update.sh` and `configure` are only ever replaced by newer versions:
+  an older tarball or `--rollback` brings back the older app only, and
+  an older release's `update.sh` is no longer handed off to.
+- One previous version is kept with its venv; the one before is removed
+  after a successful update. Unit backups in `/var/backups` are pruned
+  to the newest 5.
+- `install.sh` creates the new layout (`venvs/<id>` and the `venv`
+  symlink), installs `configure`, never downgrades `update.sh` or
+  `configure`, and points to `configure` in its messages. The sign-in
+  hints and the secret and TLS start-up errors point to `configure` too.
+
+### Notes
+- The first update to 0.7.23 moves the existing `venv/` folder to
+  `venvs/legacy-<timestamp>` and puts a symlink in its place. Nothing is
+  reinstalled; if 0.7.23 doesn't come up, the plain `venv/` folder is put
+  back as well.
+- Up to two venvs (current and previous, about 65 MB each) are kept,
+  plus a third briefly while one is built.
+
 ## [0.7.22] - guided install, Kavita over HTTPS, /healthz, pinned dependencies
 
 ### Added

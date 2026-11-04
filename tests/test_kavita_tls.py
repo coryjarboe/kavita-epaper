@@ -166,8 +166,8 @@ try:
     print("== app with Kavita over HTTPS")
     app = App("tls-none", KAVITA_BASE_URL=TLS_URL)
     r, a = sign_in()
-    check("no CA bundle: sign-in says the certificate isn't trusted, hints at KAVITA_CA_BUNDLE",
-          "its TLS certificate isn't trusted" in a and "KAVITA_CA_BUNDLE" in a, a)
+    check("no CA bundle: sign-in says the certificate isn't trusted, hints at configure ca-bundle",
+          "its TLS certificate isn't trusted" in a and "configure ca-bundle <file.pem>" in a, a)
     h = httpx.get(f"{BASE}/healthz")
     check("no CA bundle: /healthz 503 'kavita: tls'", h.status_code == 503 and h.text == "kavita: tls\n", h.text)
     app.stop()

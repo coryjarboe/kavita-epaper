@@ -117,7 +117,7 @@ for port in (18096, 18097):
         except httpx.HTTPError:
             time.sleep(0.1)
 
-HINT = f"Check KAVITA_BASE_URL in {os.path.join(ROOT, '.env')}, then restart kavita-epaper."
+HINT = f"Check the Kavita address: sudo {os.path.join(ROOT, 'configure')} kavita-url <address>"
 client_timeout = m._http.timeout
 
 
@@ -182,7 +182,7 @@ async def main():
     r, took, loc, page = await sign_in("alice", "pw")
     check("Kavita too slow to answer: 'didn't answer in time', logged as ReadTimeout",
           "accepted the connection but didn't answer in time" in alert(page) and "Kavita may be busy" in alert(page)
-          and "KAVITA_BASE_URL" not in alert(page) and any("slow (ReadTimeout" in l for l in logs), alert(page))
+          and "configure" not in alert(page) and any("slow (ReadTimeout" in l for l in logs), alert(page))
 
     use_kavita("http://127.0.0.1:18097")
     r, took, loc, page = await sign_in("alice", "pw")
@@ -205,7 +205,7 @@ async def main():
     r, took, loc, page = await sign_in("boom", "pw")
     check("Kavita 500: 'returned an error (HTTP 500)', no hint about the URL",
           "Kavita at http://127.0.0.1:18096 returned an error (HTTP 500)." in alert(page)
-          and "KAVITA_BASE_URL" not in alert(page), alert(page))
+          and "configure" not in alert(page), alert(page))
 
     print("== Kavita refuses the sign-in")
     for user, pw, want in (

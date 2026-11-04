@@ -28,6 +28,7 @@ redirect() {
 T="$H/tree"; mkdir -p "$T"
 (cd "$R" && git ls-files -z --cached --others --exclude-standard | xargs -0 -I{} cp --parents {} "$T/")
 redirect "$R/deploy/install.sh" > "$T/deploy/install.sh"
+redirect "$R/deploy/configure" > "$T/deploy/configure"; chmod 755 "$T/deploy/configure"
 redirect "$R/deploy/env.example" | sed -e "s/^#KAVITA_EPAPER_PORT=8095$/KAVITA_EPAPER_PORT=$APP_PORT/" > "$T/deploy/env.example"
 n=$(grep -vE '^\s*#' "$T/deploy/install.sh" | grep -cE '(^|[^/a-z0-9])/(opt|var/cache|var/lib|etc|var/backups)/|127\.0\.0\.1:5000')
 echo "live paths left in install.sh: $n"
@@ -103,6 +104,8 @@ alive() { [ -f "$H/app.pid" ] && kill -0 "$(cat "$H/app.pid")" 2>/dev/null; }
 stop_app() {
   if alive; then pkill -TERM -P "$(cat "$H/app.pid")" 2>/dev/null; kill "$(cat "$H/app.pid")" 2>/dev/null
     for _ in $(seq 50); do alive || break; sleep 0.1; done; fi
+  # like systemd, return only once the app itself is gone (its port is free)
+  for _ in $(seq 100); do ss -ltn | grep -qE ":$APP_PORT\b" || break; sleep 0.1; done
   rm -f "$H/app.pid"
 }
 case "$1" in
@@ -168,7 +171,10 @@ setup fresh
 install_run --kavita-url "$KAVITA"
 expect "rc 0" [ "$RC" = 0 ]
 expect "check mark" has '^\[✓\] kavita-epaper is installed and running\.'
-expect "real venv built" test -d "$I/venv" -a ! -L "$I/venv"
+expect "venv -> venvs/<id>" bash -c "[[ \$(readlink '$I/venv') =~ ^venvs/[0-9a-f]{12}$ ]]"
+expect "venv marked complete" test -f "$I/venv/.complete"
+expect "configure installed 755" bash -c "cmp -s '$I/configure' '$T/deploy/configure' && [ \$(stat -c %a '$I/configure') = 755 ]"
+expect "no previous/ on a fresh install" test ! -e "$I/previous"
 expect ".env root 600" [ "$(mode_owner "$I/.env")" = "600 root:root" ]
 expect ".env URL" [ "$(envval KAVITA_BASE_URL)" = "$KAVITA" ]
 expect "64-char secret" [ "$(envval KAVITA_EPAPER_SECRET | tr -d '\n' | wc -c)" = 64 ]
@@ -215,7 +221,7 @@ expect "rc 0" [ "$RC" = 0 ]
 expect "warning" has '^\[!\] Kavita check failed: refused'
 expect "continued and running" has '^\[✓\]'
 expect "summary not reachable" has "Kavita: +not reachable at $DEAD"
-expect "fix hint" has 'Fix KAVITA_BASE_URL in .*/\.env, then: systemctl restart kavita-epaper'
+expect "fix hint" has 'Fix it: sudo .*/opt/kavita-epaper/configure kavita-url <address>'
 expect "default written" [ "$(envval KAVITA_BASE_URL)" = "$DEAD" ]
 finish "I5 not a terminal, Kavita unreachable: warn and continue"
 
@@ -225,7 +231,7 @@ SUM=$(sha256sum "$I/.env")
 install_run --kavita-url http://127.0.0.1:18300
 expect "rc 1" [ "$RC" = 1 ]
 expect "refusal" has 'already exists, so the Kavita address you gave was not used'
-expect "edit hint" has 'edit KAVITA_BASE_URL in .*/\.env, then run: systemctl restart kavita-epaper'
+expect "configure hint" has 'To change it: sudo .*/opt/kavita-epaper/configure kavita-url http://127.0.0.1:18300'
 expect "overwrite hint" has 'rerun with --overwrite-env'
 expect ".env unchanged" [ "$(sha256sum "$I/.env")" = "$SUM" ]
 expect "nothing else ran" [ ! -s "$H/calls" ]
@@ -313,6 +319,17 @@ expect "check reported the setting" has 'Kavita check failed: tls-config: KAVITA
 expect "KAVITA_CA_BUNDLE written" [ "$(envval KAVITA_CA_BUNDLE)" = "$H/no-such-ca.pem" ]
 expect "exit 78 explained" has 'exit status 78\)'
 finish "I14 missing KAVITA_CA_BUNDLE: install warns, app refuses (78)"
+
+setup shared
+write_env "$KAVITA" "$(printf 'k%.0s' $(seq 48))"
+printf '#!/bin/bash\nUPDATE_SH_VERSION="0.7.99"\n' > "$I/update.sh"; echo newer > "$I/configure"
+cp "$I/update.sh" "$H/newer-update.sh"
+install_run
+expect "rc 0" [ "$RC" = 0 ]
+expect "keeps newer tools" has 'keeping the installed update.sh and configure \(0\.7\.99'
+expect "update.sh untouched" cmp -s "$I/update.sh" "$H/newer-update.sh"
+expect "configure untouched" [ "$(cat "$I/configure")" = newer ]
+finish "I15 rerun over newer update.sh/configure: never downgraded"
 
 "$H/bin/systemctl" stop >/dev/null 2>&1
 echo "== $PASS PASS, $FAIL FAIL of $((PASS+FAIL))"
