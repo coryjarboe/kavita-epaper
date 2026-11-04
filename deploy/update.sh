@@ -202,7 +202,7 @@ if [ -f "$INSTALL_DIR/requirements.txt" ] && \
   echo "[+] requirements.txt unchanged, skipping pip"
 else
   echo "[+] requirements.txt changed, updating venv before stopping $SVC_NAME"
-  if ! "$INSTALL_DIR/venv/bin/pip" install --quiet --upgrade -r "$TMPDIR/extract/requirements.txt"; then
+  if ! "$INSTALL_DIR/venv/bin/pip" install --disable-pip-version-check --quiet --upgrade -r "$TMPDIR/extract/requirements.txt"; then
     echo "[✗] pip install failed; $SVC_NAME was not stopped and is still running $(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo 'the previous version')" >&2
     echo "    nothing else was changed (pip may have added packages to the venv)" >&2
     exit 1

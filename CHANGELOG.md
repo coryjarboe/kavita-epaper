@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.20] - shorter browser cover cache, quieter update.sh
+
+### Changed
+- Browsers now keep a cover for at most an hour (`Cache-Control:
+  private, max-age=3600`, previously a day), and never past the time
+  the server's own cache entry has left under `KAVITA_EPAPER_COVER_TTL`.
+  A cover Kavita stops serving to a user, or replaces, no longer lingers
+  on that device for up to a day.
+- The blank placeholder served for a cover Kavita refuses is sent with
+  `Cache-Control: no-store`, so the real cover shows as soon as Kavita
+  serves it again.
+- `update.sh` runs pip with `--disable-pip-version-check`, so updates no
+  longer print pip's "new release available" notice.
+
 ## [0.7.19] - encrypted session cookie, per-user cover cache, trusted proxy
 
 ### Security

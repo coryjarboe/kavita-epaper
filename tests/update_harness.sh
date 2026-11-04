@@ -46,7 +46,13 @@ mk_tarball good
 mk_tarball typo 's/^ExecStart=/ExecStartt=/'
 git -C "$R" show "$OLD_REF:deploy/kavita-epaper.service" > "$H/unit-old"
 cp "$H/tree-good/deploy/kavita-epaper.service" "$H/unit-new"
-cmp -s "$H/unit-old" "$H/unit-new" && echo "note: unit unchanged since $OLD_REF, scenarios A, D, E expect a unit change"
+# The unit-sync scenarios need the installed unit to differ from the release's.
+# If it didn't change since OLD_REF, mark the installed copy (a comment line),
+# like the requirements.txt copy in setup().
+if cmp -s "$H/unit-old" "$H/unit-new"; then
+  echo "# harness: installed copy" >> "$H/unit-old"
+  echo "note: unit unchanged since $OLD_REF; the installed copy gets a marker comment so it differs"
+fi
 
 setup() {  # $1 installed unit: old|new|none ; $2 installed update.sh: old|new ; $3 reqs: changed|same
   rm -rf "$H/opt" "$H/etc" "$H/backups" "$H/calls" "$H/n"

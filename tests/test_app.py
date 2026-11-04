@@ -141,6 +141,11 @@ def files():
     return sorted(os.listdir(COVERS))
 
 
+def max_age(r):
+    m = re.fullmatch(r"private, max-age=(\d+)", r.headers.get("cache-control", ""))
+    return int(m.group(1)) if m else None
+
+
 def old_cookie(secret, data):
     """Signed-only cookie as issued up to 0.7.18 (itsdangerous, test-only dependency)."""
     from itsdangerous import TimestampSigner, URLSafeSerializer
@@ -227,6 +232,10 @@ check("alice series 1: JPEG, second request served from cache",
 check("cache file named with HMAC tag, no username in name",
       f"u{ta}-series-1.bin" in files() and f"u{ta}-series-1.bin.ct" in files()
       and not any("alice" in n or "bob" in n for n in files()))
+check("fresh cover: Cache-Control private, max-age=3600", max_age(r_a1) == 3600,
+      r_a1.headers.get("cache-control"))
+check("cache hit: max-age at most 3600 and not past the entry's TTL",
+      max_age(r_a2) is not None and 3500 <= max_age(r_a2) <= 3600, r_a2.headers.get("cache-control"))
 r, sc, cb = login("bob")
 r_b1 = get("/cover/series/1", cb)
 check("bob series 1 is fetched from Kavita for bob, not served from alice's entry",
@@ -236,10 +245,17 @@ stub("/_deny", user="bob", kind="series", id="2")
 r_b2, r_a3 = get("/cover/series/2", cb), get("/cover/series/2", ca)
 check("bob denied series 2 -> placeholder, nothing cached for bob", is_placeholder(r_b2)
       and f"u{tb}-series-2.bin" not in files())
+check("placeholder sent with Cache-Control no-store", r_b2.headers.get("cache-control") == "no-store")
 check("alice allowed series 2 -> JPEG", r_a3.headers.get("content-type") == "image/jpeg")
 r_l = get("/cover/library/5", ca)
 check("alice library cover 5 -> JPEG, cached per user",
       r_l.headers.get("content-type") == "image/jpeg" and f"u{ta}-library-5.bin" in files())
+pl = os.path.join(COVERS, f"u{ta}-library-5.bin")
+os.utime(pl, (time.time() - (86400 - 100),) * 2)
+r_l2 = get("/cover/library/5", ca)
+check("hit 100 s before TTL: max-age clamped to the remaining time, no Kavita fetch",
+      max_age(r_l2) is not None and 90 <= max_age(r_l2) <= 100 and hits().get("alice:library:5") == 1,
+      r_l2.headers.get("cache-control"))
 p1 = os.path.join(COVERS, f"u{ta}-series-1.bin")
 os.utime(p1, (time.time() - 2 * 86400,) * 2)
 get("/cover/series/1", ca)
@@ -321,8 +337,9 @@ check("TTL=0: startup removes every per-user cover file",
       before and not any(n.startswith("u") for n in files()), f"{len(before)} removed")
 stub("/_reset")
 r, sc, c4 = login("alice")
+r4 = get("/cover/series/3", c4)
 get("/cover/series/3", c4)
-get("/cover/series/3", c4)
+check("TTL=0: cover still sent with max-age=3600", max_age(r4) == 3600, r4.headers.get("cache-control"))
 check("TTL=0: every request goes to Kavita, nothing written",
       hits().get("alice:series:3") == 2 and not any(n.startswith("u") for n in files()))
 log4 = app.text()

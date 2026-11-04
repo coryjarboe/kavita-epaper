@@ -294,7 +294,7 @@ Users sign in again after the move, because the new install generates a new sess
 | `KAVITA_EPAPER_COOKIE_SECURE`| `auto`                          | `auto` follows request scheme. Or pin `true`/`false`.|
 | `KAVITA_EPAPER_SESSION_TTL`  | `2592000` (30d)                 | Session lifetime in seconds.                         |
 | `KAVITA_EPAPER_GRAYSCALE`    | `true`                          | Pre-render covers to grayscale. Disable for color.   |
-| `KAVITA_EPAPER_COVER_TTL`    | `86400` (1 day)                 | Seconds a cached cover is served before refetching. `0` = no disk cache. Cached per user. |
+| `KAVITA_EPAPER_COVER_TTL`    | `86400` (1 day)                 | Seconds a cached cover is served before refetching. `0` = no disk cache. Cached per user. Browsers keep a cover for at most an hour, and never past this. |
 | `KAVITA_EPAPER_FORWARDED_ALLOW_IPS` | `*`                      | Who may set `X-Forwarded-*` headers. Your proxy's IP, e.g. `192.0.2.10`; see [Security](#security). |
 | `KAVITA_EPAPER_KEEPALIVE_SECONDS` | `0` (off)                  | Reader pings `/ping` this often while visible, for e-readers whose Wi-Fi drops between page loads. Try `25`. |
 | `KAVITA_EPAPER_RELEASES_DIR` | `/var/lib/kavita-epaper/releases` | Where `update.sh` looks when called with no args.  |

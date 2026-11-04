@@ -1049,6 +1049,21 @@ def _to_grayscale(data: bytes, content_type: str) -> tuple[bytes, str]:
 _COVER_LEGACY = re.compile(r"^(series|library)-\d+\.bin(\.ct)?$")
 _COVER_USER = re.compile(r"^u[0-9a-f]{16}-(series|library)-\d+\.bin(\.ct)?$")
 _COVER_TMP_PREFIX = ".tmp-"
+# Longest a browser may keep a cover before asking again. Kept short so a
+# cover Kavita stops serving to a user (or replaces) doesn't linger on the
+# device; a cached copy is also never kept past its server-side COVER_TTL.
+_COVER_BROWSER_MAX_AGE = 3600
+
+
+def _cover_cache_control(remaining: float | None) -> dict:
+    """Cache-Control for a cover. remaining is how long the server-side entry
+    stays valid, or None when the disk cache is off."""
+    max_age = _COVER_BROWSER_MAX_AGE
+    if remaining is not None:
+        max_age = max(0, min(max_age, int(remaining)))
+    return {"Cache-Control": f"private, max-age={max_age}"}
+
+
 _PLACEHOLDER_GIF = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
 
 
@@ -1158,7 +1173,7 @@ async def _serve_cover(
                 return Response(
                     content=data,
                     media_type=ctype,
-                    headers={"Cache-Control": "private, max-age=86400"},
+                    headers=_cover_cache_control(COVER_TTL - age),
                 )
             expired = True
 
@@ -1167,8 +1182,14 @@ async def _serve_cover(
         if expired:
             # Kavita no longer serves this cover to this user: forget it.
             _remove_cover(cached)
-        # 1x1 transparent gif so the page still lays out.
-        return Response(content=_PLACEHOLDER_GIF, media_type="image/gif", status_code=200)
+        # 1x1 transparent gif so the page still lays out. Not cached, so the
+        # real cover shows as soon as Kavita serves it again.
+        return Response(
+            content=_PLACEHOLDER_GIF,
+            media_type="image/gif",
+            status_code=200,
+            headers={"Cache-Control": "no-store"},
+        )
 
     ctype = r.headers.get("content-type", "image/jpeg")
     data, ctype = _to_grayscale(r.content, ctype)
@@ -1178,7 +1199,7 @@ async def _serve_cover(
     return Response(
         content=data,
         media_type=ctype,
-        headers={"Cache-Control": "private, max-age=86400"},
+        headers=_cover_cache_control(COVER_TTL if cached else None),
     )
 
 
