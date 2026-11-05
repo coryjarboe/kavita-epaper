@@ -9,6 +9,10 @@
 #   sudo /opt/kavita-epaper/update.sh --status                         # what's installed, what --rollback does
 #   sudo /opt/kavita-epaper/update.sh --rollback [--yes]               # switch to the kept previous version
 #
+# A release older than the installed version is refused unless
+# --allow-downgrade is given (in any position); --rollback is the usual way
+# back and needs no flag.
+#
 # Layout (from 0.7.23): app/, VERSION, requirements.txt, constraints.txt are
 # the current version; venv is a symlink to venvs/<id>, one venv per set of
 # dependencies, built in place and never renamed; previous/ is the one kept
@@ -33,7 +37,7 @@ set -euo pipefail
 
 # The version of this script. A tarball's update.sh only takes over (handoff)
 # and only gets installed when its version is newer than this one.
-UPDATE_SH_VERSION="0.7.23"
+UPDATE_SH_VERSION="0.7.24"
 
 INSTALL_DIR="/opt/kavita-epaper"
 SVC_NAME="kavita-epaper.service"
@@ -139,7 +143,7 @@ start_service() {
   systemctl reset-failed "$SVC_NAME" 2>/dev/null || true
   systemctl start "$SVC_NAME" || true
 }
-kavita_note() {  # warn (never fail) when the app can't reach Kavita
+kavita_note() {  # $1: "update" or "switch". Warn (never fail) when the app can't reach Kavita
   local out
   out=$(python3 - "$(check_url)/healthz" <<'PY' 2>/dev/null || true
 import sys, urllib.request, urllib.error
@@ -153,7 +157,8 @@ PY
 )
   if [ -n "$out" ]; then
     echo "[!] kavita-epaper is running, but Kavita isn't answering ($out)."
-    echo "    The update itself is fine; check Kavita or KAVITA_BASE_URL."
+    echo "    The ${1:-update} itself is fine. Check that Kavita is up, and the address kavita-epaper uses:"
+    echo "    sudo $INSTALL_DIR/configure show   (change it with: configure kavita-url <address>)"
   fi
 }
 
@@ -349,7 +354,7 @@ do_rollback() {
     rm -f "$JOURNAL"; rm -rf "$INSTALL_DIR/next"
     prune_unit_backups
     echo "[✓] switched to $prev_v; $cur_v is kept as the previous version (update.sh --rollback switches back)"
-    kavita_note
+    kavita_note switch
     return 0
   fi
   echo "[✗] $prev_v didn't come up; switching back to $cur_v" >&2
@@ -366,6 +371,12 @@ do_rollback() {
 }
 
 # ---------------------------------------------------------------- arguments
+ALLOW_DOWNGRADE=""
+ARGS=()
+for a in "$@"; do
+  if [ "$a" = --allow-downgrade ]; then ALLOW_DOWNGRADE=1; else ARGS+=("$a"); fi
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
 case "${1:-}" in
   --status) show_status; exit 0 ;;
   --rollback)
@@ -421,7 +432,7 @@ if [ -z "$SOURCE" ]; then
   SOURCE=$(ls "$RELEASES_DIR"/kavita-epaper-v*.tar.gz 2>/dev/null | sort -V | tail -1 || true)
   if [ -z "$SOURCE" ]; then
     echo "No kavita-epaper-v*.tar.gz found in $RELEASES_DIR" >&2
-    echo "Usage: $0 [<tarball-path-or-url>]" >&2
+    echo "Usage: $0 [--allow-downgrade] [<tarball-path-or-url>]" >&2
     exit 1
   fi
   echo "[+] auto-selected: $SOURCE"
@@ -478,7 +489,7 @@ INCOMING_VERSION=$(script_version "$INCOMING")
 if [ -z "${KAVITA_EPAPER_UPDATE_HANDOFF:-}" ] && [ -n "$INCOMING_VERSION" ] && \
    newer_than "$INCOMING_VERSION" "$UPDATE_SH_VERSION" && ! cmp -s "$INCOMING" "${BASH_SOURCE[0]}"; then
   echo "[+] handing off to the tarball's update.sh"
-  KAVITA_EPAPER_UPDATE_HANDOFF=1 bash "$INCOMING" "$TARBALL"; exit $?
+  KAVITA_EPAPER_UPDATE_HANDOFF=1 bash "$INCOMING" "$TARBALL" ${ALLOW_DOWNGRADE:+--allow-downgrade}; exit $?
 fi
 
 recover_if_interrupted
@@ -501,7 +512,15 @@ if [ "$NEW_V" = "$CUR_V" ]; then
   exit 0
 fi
 if newer_than "$CUR_V" "$NEW_V"; then
-  echo "[+] $NEW_V is older than $CUR_V; installing its app, keeping update.sh and configure ${INSTALLED_TOOLS_VERSION:-$UPDATE_SH_VERSION}"
+  if [ -z "$ALLOW_DOWNGRADE" ]; then
+    echo "[✗] the release you gave is $NEW_V, older than the installed $CUR_V; nothing was changed." >&2
+    if [ -f "$INSTALL_DIR/previous/VERSION" ]; then
+      echo "    To switch back to the kept previous version ($(version_of "$INSTALL_DIR/previous")): sudo $INSTALL_DIR/update.sh --rollback" >&2
+    fi
+    echo "    To install $NEW_V anyway, add --allow-downgrade to this command." >&2
+    exit 1
+  fi
+  echo "[+] $NEW_V is older than $CUR_V (--allow-downgrade); installing its app, keeping update.sh and configure ${INSTALLED_TOOLS_VERSION:-$UPDATE_SH_VERSION}"
 fi
 
 # The app refuses to start without a real session secret (from 0.7.21).
@@ -645,7 +664,7 @@ if wait_healthy; then
   echo "[✓] kavita-epaper updated to $NEW_V and running"
   echo "    previous version $CUR_V is kept (update.sh --rollback switches back)"
   systemctl status "$SVC_NAME" --no-pager | head -3 || true
-  kavita_note
+  kavita_note update
   exit 0
 fi
 

@@ -4,6 +4,31 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 upgrade notes called out where they require manual steps.
 
+## [0.7.24] - downgrade guard, wording fixes
+
+### Changed
+- `update.sh` refuses a release older than the installed one, in every
+  mode (path, URL, releases directory, `--github`), before anything
+  is stopped: "the release you gave is X, older than the installed Y;
+  nothing was changed", with the `--rollback` command for the kept
+  previous version and a pointer to `--allow-downgrade`.
+  `--allow-downgrade` (accepted in any position, and passed on when
+  `update.sh` hands off to a newer copy) installs it anyway.
+  `--rollback` needs no flag. While the GitHub releases lag behind,
+  `update.sh --github` no longer takes the app back to them.
+- `install.sh` refuses to install an older release over a newer one the
+  same way, unless given `--allow-downgrade`. Its `--help` explains that
+  `sudo` drops environment variables, so `KAVITA_BASE_URL` has to go
+  after `sudo` (or use `--kavita-url`).
+- The warning when Kavita isn't answering after an update or a
+  `--rollback` names which one it was and points to `configure show` and
+  `configure kavita-url`.
+- `configure show` prints the listen address as `0.0.0.0:8095
+  (defaults)`; the reminder after `new-secret --keep-sessions` uses the
+  configured `KAVITA_EPAPER_SESSION_TTL` instead of a fixed 30 days.
+- `configure ca-bundle` refuses paths under `/root` or `/home` before
+  looking at the file, so the harness no longer writes to `/root`.
+
 ## [0.7.23] - all-or-nothing updates, --rollback, configure
 
 ### Added

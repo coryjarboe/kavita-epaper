@@ -69,8 +69,13 @@ PY
 unit_change() { echo "# harness: unit change" >> deploy/kavita-epaper.service; }
 unit_typo() { sed -i 's/^ExecStart=/ExecStartt=/' deploy/kavita-epaper.service; }
 broken_import_unit() { broken_import; unit_change; }
-mk_tarball v23
-mk_tarball v23deps "" deps_b
+# The checkout's code plays 0.7.23 here, test builds play 0.7.24 and 0.7.25:
+# versions are only labels, the scenarios compare them. V0 checks the real
+# VERSION and UPDATE_SH_VERSION agree.
+mk_tarball v23 0.7.23
+mk_tarball v23deps 0.7.23 deps_b
+newtools_oldapp() { echo 0.7.20 > VERSION; }
+mk_tarball newtools 0.7.24 newtools_oldapp
 mk_tarball v24 0.7.24 note_24
 reqs_change() { echo "# harness: requirements change" >> requirements.txt; }
 mk_tarball v24reqs 0.7.24 reqs_change
@@ -199,6 +204,11 @@ snap() {  # everything that defines the install, minus failed/ and caches
    done)
 }
 pid() { cat "$H/app.pid" 2>/dev/null; }
+same_but_unit_backups() {  # BEFORE AFTER: identical, apart from added /var/backups unit copies
+  local d; d=$(diff <(printf '%s\n' "$1") <(printf '%s\n' "$2") | grep -E '^[<>]' || true)
+  [ -z "$d" ] && return 0
+  ! printf '%s\n' "$d" | grep -vqE '^> F backups/kavita-epaper\.service\.'
+}
 finish() {
   if [ -z "$BAD" ]; then echo "PASS  $1"; PASS=$((PASS+1)); else echo "FAIL  $1: $BAD"; FAIL=$((FAIL+1)); fi
   echo "      rc=$RC version=$(v) venv=$(link venv) previous=$(v previous/) prev-venv=$(link previous/venv) venvs=$(nvenvs) tools=$(tools_v) failed=$(v failed/)"
@@ -251,7 +261,7 @@ BEFORE=$(snap)
 upd "$H/rel/broken.tar.gz"
 expect "rc 1" [ "$RC" = 1 ]
 expect "rolled back message" has 'update to 0.7.24 failed; rolled back, running 0.7.22 again'
-expect "install exactly as before (failed/ aside)" [ "$BEFORE" = "$(snap)" ]
+expect "install exactly as before (failed/ aside; only a unit backup added)" same_but_unit_backups "$BEFORE" "$(snap)"
 expect "venv is a real dir again" bash -c "[ -d '$I/venv' ] && [ ! -L '$I/venv' ]"
 expect "update.sh is 0.7.22's again" cmp -s "$I/update.sh" "$H/old-update.sh"
 expect "no venvs dir" test ! -e "$I/venvs"
@@ -293,15 +303,54 @@ expect "exactly two venvs, legacy gone" bash -c "[ \$(ls -1 '$I/venvs' | wc -l) 
 finish "U2 two dependency changes: the oldest venv is removed, one previous kept"
 
 restore 23
+BEFORE=$(snap)
 upd "$H/rel/old22.tar.gz"
+expect "rc 1" [ "$RC" = 1 ]
+expect "names both versions" has 'the release you gave is 0.7.22, older than the installed 0.7.23; nothing was changed'
+expect "points at --rollback" has 'switch back to the kept previous version \(0.7.22\): sudo .*update.sh --rollback'
+expect "points at --allow-downgrade" has 'add --allow-downgrade to this command'
+expect "nothing stopped" bash -c "! grep -q '^systemctl stop' '$H/calls'"
+expect "nothing changed" [ "$BEFORE" = "$(snap)" ]
+finish "U3 older (0.7.22) tarball without --allow-downgrade: refused, nothing changed"
+
+restore 23
+upd "$H/rel/old22.tar.gz" --allow-downgrade
 expect "rc 0" [ "$RC" = 0 ]
 expect "no handoff to the older script" lacks 'handing off'
-expect "older-version message" has '0.7.22 is older than 0.7.23; installing its app, keeping update.sh and configure 0.7.23'
+expect "older-version message" has '0.7.22 is older than 0.7.23 \(--allow-downgrade\); installing its app, keeping update.sh and configure 0.7.23'
 expect "app is 0.7.22" bash -c "[ '$(v)' = 0.7.22 ] && diff -rq '$I/app' '$T22/app' >/dev/null"
 expect "tools still 0.7.23's" tools_are v23
 expect "previous 0.7.23" [ "$(v previous/)" = 0.7.23 ]
 expect "app answers" login_ok
-finish "U3 install an older (0.7.22) tarball: app goes back, update.sh/configure stay 0.7.23"
+finish "U3b --allow-downgrade (after the path): app goes back, update.sh/configure stay 0.7.23"
+
+restore 23
+upd --allow-downgrade "$H/rel/old22.tar.gz"
+expect "rc 0, flag first works" bash -c "[ '$RC' = 0 ] && [ '$(v)' = 0.7.22 ]"
+finish "U3c --allow-downgrade before the path"
+
+restore 23
+BEFORE=$(snap)
+upd "$H/rel/newtools.tar.gz"
+expect "rc 1" [ "$RC" = 1 ]
+expect "handed off to the newer update.sh" has 'handing off'
+expect "the newer copy refuses the older app" has 'the release you gave is 0.7.20, older than the installed 0.7.23'
+expect "nothing changed" [ "$BEFORE" = "$(snap)" ]
+upd "$H/rel/newtools.tar.gz" --allow-downgrade
+expect "with the flag: handed off and installed" bash -c "[ '$RC' = 0 ] && grep -q 'handing off' '$H/out' && [ '$(v)' = 0.7.20 ]"
+expect "the newer tools are installed" tools_are newtools
+finish "U3d --allow-downgrade is passed through a handoff (newer update.sh, older app)"
+
+restore 23
+mkdir -p "$H/lib/releases"; cp "$H/rel/old22.tar.gz" "$H/lib/releases/kavita-epaper-v0.7.22.tar.gz"
+BEFORE=$(snap)
+upd
+expect "rc 1" [ "$RC" = 1 ]
+expect "picked from the releases dir" has 'auto-selected: .*kavita-epaper-v0.7.22.tar.gz'
+expect "refused" has 'older than the installed 0.7.23; nothing was changed'
+expect "nothing changed" [ "$BEFORE" = "$(snap)" ]
+rm -rf "$H/lib/releases"
+finish "U3e releases-dir mode with only an older tarball: refused"
 
 # ---------------------------------------------------------------- failures
 restore 23
@@ -388,7 +437,10 @@ upd "$H/rel/v24.tar.gz"
 expect "rc 0" [ "$RC" = 0 ]
 expect "updated" [ "$(v)" = 0.7.24 ]
 expect "Kavita warning only" has "kavita-epaper is running, but Kavita isn't answering \(kavita: refused\)"
-finish "K1 Kavita down during the update: no rollback, only a warning"
+expect "update wording, configure pointer" bash -c "grep -q 'The update itself is fine' '$H/out' && grep -q 'configure show' '$H/out'"
+upd --rollback --yes
+expect "rollback with Kavita down: switch wording" bash -c "[ '$RC' = 0 ] && grep -q 'The switch itself is fine' '$H/out'"
+finish "K1 Kavita down during an update and a rollback: only a warning, worded for each"
 start_stub
 
 # ---------------------------------------------------------------- unit, secret, handoff
@@ -510,7 +562,7 @@ upd --rollback --yes
 expect "rc 1" [ "$RC" = 1 ]
 expect "message" has "0.7.22 didn't come up; switching back to 0.7.23"
 expect "still 0.7.23" has 'rollback failed; still running 0.7.23, nothing changed'
-expect "install exactly as before" [ "$BEFORE" = "$(snap)" ]
+expect "install exactly as before (only a unit backup added)" same_but_unit_backups "$BEFORE" "$(snap)"
 expect "app answers" login_ok
 finish "R4 --rollback to a version that won't start: switched back, nothing changed"
 
@@ -521,6 +573,7 @@ expect "rc 0" [ "$RC" = 0 ]
 expect "secret masked" has 'session secret +set, 48 characters'
 expect "secret never printed" lacks "$SECRET"
 expect "Kavita reachable" has '^Kavita: +reachable'
+expect "listen address format" has 'listen address +0\.0\.0\.0:18295 \(default host\)$'
 finish "CF1 configure show"
 
 restore 23
@@ -570,10 +623,8 @@ c = (x509.CertificateBuilder().subject_name(n).issuer_name(n).public_key(k.publi
      .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True).sign(k, hashes.SHA256()))
 open(sys.argv[1], "wb").write(c.public_bytes(serialization.Encoding.PEM))
 PY
-cp "$H/etc-kavita/ca.pem" /root/.kavita-epaper-harness-ca.pem
 cfg ca-bundle "$H/etc-kavita/missing.pem"; RC1=$RC
-cfg ca-bundle /root/.kavita-epaper-harness-ca.pem; RC2=$RC; OUT2=$(cat "$H/out")
-rm -f /root/.kavita-epaper-harness-ca.pem
+cfg ca-bundle /root/kavita-epaper-no-such-ca.pem; RC2=$RC; OUT2=$(cat "$H/out")
 echo junk > "$H/etc-kavita/junk.pem"; cfg ca-bundle "$H/etc-kavita/junk.pem"; RC3=$RC
 cfg ca-bundle "$H/etc-kavita/ca.pem"
 expect "missing refused" [ "$RC1" = 2 ]
@@ -601,6 +652,8 @@ expect "signed in before" [ "$L0" = 200 ]
 expect "rc 0" [ "$RC" = 0 ]
 expect "new 64-char secret" bash -c "[ \${#1} = 64 ] && [ \"\$1\" != '$SECRET' ]" _ "$NEW"
 expect "old kept as PREVIOUS" [ "$PREV" = "$SECRET" ]
+expect "reminder uses the default TTL" has 'After 30 days \(KAVITA_EPAPER_SESSION_TTL\), run: configure forget-previous-secret'
+
 expect "old cookie still works" [ "$(lib)" = 200 ]
 expect "no secret printed" bash -c "! grep -qF -e '$SECRET' -e \"\$1\" '$H/out'" _ "$NEW"
 cfg forget-previous-secret
@@ -625,6 +678,15 @@ expect "5 .env backups kept" [ "$(ls "$H/backups" | grep -c '^kavita-epaper.env\
 printf '4\n7200\n' | script -qefc "python3 $I/configure" /dev/null > "$H/out" 2>&1; RC=$?
 expect "menu sets cover TTL" bash -c "[ '$RC' = 0 ] && grep -q '^KAVITA_EPAPER_COVER_TTL=7200$' '$I/.env'"
 finish "CF7 .env backups pruned to 5; the terminal menu works"
+
+restore 23
+echo "KAVITA_EPAPER_SESSION_TTL=604800" >> "$I/.env"
+cfg new-secret --keep-sessions
+expect "7-day TTL in the reminder" bash -c "[ '$RC' = 0 ] && grep -q 'After 7 days (KAVITA_EPAPER_SESSION_TTL)' '$H/out'"
+sed -i 's/^KAVITA_EPAPER_SESSION_TTL=.*/KAVITA_EPAPER_SESSION_TTL=90000/' "$I/.env"
+cfg new-secret --keep-sessions
+expect "non-day TTL in seconds" bash -c "[ '$RC' = 0 ] && grep -q 'After 90000 seconds' '$H/out'"
+finish "CF8 rotation reminder follows KAVITA_EPAPER_SESSION_TTL"
 
 "$H/bin/systemctl" stop >/dev/null 2>&1
 echo "== $PASS PASS, $FAIL FAIL of $((PASS+FAIL))"

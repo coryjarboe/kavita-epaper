@@ -209,7 +209,7 @@ sudo /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 
 Mode 3 picks the highest-versioned `kavita-epaper-*.tar.gz` in `$KAVITA_EPAPER_RELEASES_DIR`. Defaults to `/var/lib/kavita-epaper/releases`. Adjust in `.env` if you drop tarballs somewhere else.
 
-Mode 4 hits GitHub's `/releases/latest` API for the given `owner/repo`, finds the `kavita-epaper-v*.tar.gz` asset, and downloads it. **Check the version first:** if the latest GitHub release is older than what you run (the GitHub releases currently lag behind), mode 4 installs that older release, which takes the app back to it; `update.sh` doesn't refuse older versions yet. Compare `sudo /opt/kavita-epaper/update.sh --status` with the version on the releases page. Anonymous API access is rate-limited to 60 requests per hour per IP. For private repos or higher limits, export `GITHUB_TOKEN` and use `sudo -E`:
+Mode 4 hits GitHub's `/releases/latest` API for the given `owner/repo`, finds the `kavita-epaper-v*.tar.gz` asset, and downloads it. If the latest GitHub release is older than what you run (the GitHub releases currently lag behind), `update.sh` refuses it and changes nothing; see [Going back to an older version](#going-back-to-an-older-version). Anonymous API access is rate-limited to 60 requests per hour per IP. For private repos or higher limits, export `GITHUB_TOKEN` and use `sudo -E`:
 
 ```bash
 export GITHUB_TOKEN=ghp_...
@@ -232,21 +232,32 @@ sudo /opt/kavita-epaper/update.sh --rollback          # asks first, saying which
 sudo /opt/kavita-epaper/update.sh --rollback --yes    # no question (needed when not in a terminal)
 ```
 
-`--rollback` toggles: run it again and it switches forward. It's checked like an update (active and login page) and undone if the previous version doesn't come up. Installing an older release's tarball also works. Either way only the app goes back: `update.sh` and `configure` always stay the newest version you've installed. Unit backups in `/var/backups` are pruned to the newest 5.
+`--rollback` toggles: run it again and it switches forward. It's checked like an update (active and login page) and undone if the previous version doesn't come up. Unit backups in `/var/backups` are pruned to the newest 5.
+
+### Going back to an older version
+
+`update.sh` (from 0.7.24) refuses a release older than the installed one in every mode, and says so: "the release you gave is 0.7.20, older than the installed 0.7.24; nothing was changed". The usual way back is `update.sh --rollback`, which needs no flag. To install an older release on purpose, add `--allow-downgrade`:
+
+```bash
+sudo /opt/kavita-epaper/update.sh --allow-downgrade /path/to/kavita-epaper-v0.7.20.tar.gz
+```
+
+Either way only the app goes back: `update.sh` and `configure` always stay the newest version you've installed. `install.sh` refuses to install an older release over a newer one the same way, unless given `--allow-downgrade`.
 
 `--status` prints something like:
 
 ```
-current:   0.7.23   (venv: venvs/legacy-20261103-230519)
-previous:  0.7.22   (venv: venvs/legacy-20261103-230519)
---rollback would switch from 0.7.23 to 0.7.22 (and a second --rollback back to 0.7.23).
-update.sh: 0.7.23
+current:   0.7.24   (venv: venvs/legacy-20261103-230519)
+previous:  0.7.23   (venv: venvs/legacy-20261103-230519)
+--rollback would switch from 0.7.24 to 0.7.23 (and a second --rollback back to 0.7.24).
+update.sh: 0.7.24
 ```
 
 The first update to 0.7.23 or newer also moves the existing `venv/` folder into `venvs/` and puts a symlink in its place; nothing needs reinstalling.
 
 ### If an update fails
 
+- **"… older than the installed …":** nothing changed; see [Going back to an older version](#going-back-to-an-older-version).
 - **"was not stopped and is still running …"** (secret, unit or venv problem): nothing changed. Fix what the message names (for a weak secret, `sudo /opt/kavita-epaper/configure new-secret`) and run the update again.
 - **"update to X failed; rolled back, running Y again":** the new version didn't come up, and everything is back as it was. See why with `journalctl -u kavita-epaper -n 50 --no-pager`; the new version's code is in `/opt/kavita-epaper/failed/` until the next update. `update.sh --status` confirms what's running. Report it, or try a different release.
 - **"… doesn't come up after putting it back either":** all files are as they were before the update, but the old version won't start either, so the problem is outside the update (for example `.env`, the port, or Kavita settings the app refuses). Read the journal, check `sudo /opt/kavita-epaper/configure show`, and if you can't fix it, restore from a backup.

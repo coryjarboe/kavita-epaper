@@ -267,10 +267,12 @@ def v_ca_bundle(raw: str) -> str | None:
         return None
     path = os.path.abspath(raw.strip())
     real = os.path.realpath(path)
+    # Checked before the file itself: the service can never read these.
+    for hidden in ("/root", "/home"):
+        if hidden in (path, real) or path.startswith(hidden + "/") or real.startswith(hidden + "/"):
+            raise Refused("the service can't see /root or /home; put it in /etc/kavita-epaper/ instead")
     if not os.path.isfile(real):
         raise Refused(f"{path} is not a file")
-    if real == "/root" or real.startswith(("/root/", "/home/")):
-        raise Refused("the service can't see /root or /home; put it in /etc/kavita-epaper/ instead")
     try:
         ssl.create_default_context().load_verify_locations(cafile=real)
     except (ssl.SSLError, OSError, ValueError):
@@ -283,6 +285,19 @@ def v_ca_bundle(raw: str) -> str | None:
     if not can_read:
         raise Refused(f"the {SERVICE_USER} user can't read {path} (try chmod 644 and a readable directory)")
     return path
+
+
+def session_ttl_text(values: dict[str, str]) -> str:
+    """KAVITA_EPAPER_SESSION_TTL as people say it: "30 days", "1 day", or seconds."""
+    raw = (values.get("KAVITA_EPAPER_SESSION_TTL") or "2592000").strip()
+    try:
+        ttl = int(raw)
+    except ValueError:
+        return f"{raw} seconds"
+    if ttl > 0 and ttl % 86400 == 0:
+        days = ttl // 86400
+        return f"{days} day{'s' if days != 1 else ''}"
+    return f"{ttl} seconds"
 
 
 def secret_ok(s: str) -> bool:
@@ -334,7 +349,11 @@ def show() -> int:
     print(f"  trusted proxies      KAVITA_EPAPER_FORWARDED_ALLOW_IPS={val('KAVITA_EPAPER_FORWARDED_ALLOW_IPS')}")
     print(f"  cookie Secure flag   KAVITA_EPAPER_COOKIE_SECURE={val('KAVITA_EPAPER_COOKIE_SECURE')}")
     print(f"  cover cache TTL      KAVITA_EPAPER_COVER_TTL={val('KAVITA_EPAPER_COVER_TTL')}")
-    print(f"  listen address       {val('KAVITA_EPAPER_HOST')}:{val('KAVITA_EPAPER_PORT')}")
+    host = v.get("KAVITA_EPAPER_HOST") or DEFAULTS["KAVITA_EPAPER_HOST"]
+    port = v.get("KAVITA_EPAPER_PORT") or DEFAULTS["KAVITA_EPAPER_PORT"]
+    defaults = [n for n, k in (("host", "KAVITA_EPAPER_HOST"), ("port", "KAVITA_EPAPER_PORT")) if not v.get(k)]
+    note = {2: " (defaults)", 1: f" (default {defaults[0]})" if defaults else "", 0: ""}[len(defaults)]
+    print(f"  listen address       {host}:{port}{note}")
     state = (f"set, {len(secret)} characters" if secret_ok(secret)
              else "NOT USABLE (missing, placeholder or short); run: configure new-secret")
     print(f"  session secret       {state}")
@@ -407,7 +426,7 @@ def run(cmd: str, args: list[str]) -> int:
             what = "new session secret set; everyone signs in again"
         rc = apply(changes, what)
         if rc == 0 and "KAVITA_EPAPER_SECRET_PREVIOUS" in changes and changes["KAVITA_EPAPER_SECRET_PREVIOUS"]:
-            print("    After 30 days (KAVITA_EPAPER_SESSION_TTL), run: configure forget-previous-secret")
+            print(f"    After {session_ttl_text(cur)} (KAVITA_EPAPER_SESSION_TTL), run: configure forget-previous-secret")
         return rc
     if cmd == "forget-previous-secret":
         return apply({"KAVITA_EPAPER_SECRET_PREVIOUS": None}, "previous session secret removed")

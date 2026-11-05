@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh: first-time deploy of kavita-epaper.
 #
-#   sudo bash ./deploy/install.sh [--kavita-url URL] [--overwrite-env]
+#   sudo bash ./deploy/install.sh [--kavita-url URL] [--overwrite-env] [--allow-downgrade]
 #
 # (Already root, for example in a Proxmox container? Leave out "sudo".)
 #
@@ -11,7 +11,9 @@
 # only gives a warning. An existing .env is kept unless --overwrite-env is
 # given; the old one is then backed up to /var/backups and its secret kept.
 # KAVITA_CA_BUNDLE and KAVITA_TLS_VERIFY from the environment go into a new
-# .env too.
+# .env too (sudo drops environment variables: put them after sudo).
+# Installing a release older than the installed one is refused unless
+# --allow-downgrade is given; to go back, update.sh --rollback is the usual way.
 #
 # Idempotent: safe to re-run from a freshly-extracted tarball to repair an
 # install. For routine updates after the initial install, use update.sh
@@ -37,13 +39,17 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_DIR="$( cd "${SCRIPT_DIR}/.." && pwd )"
 
 usage() {
-  echo "usage: install.sh [--kavita-url URL] [--overwrite-env]"
-  echo "  --kavita-url URL   Kavita's address, e.g. http://192.0.2.20:5000 (or set KAVITA_BASE_URL)"
+  echo "usage: install.sh [--kavita-url URL] [--overwrite-env] [--allow-downgrade]"
+  echo "  --kavita-url URL   Kavita's address, e.g. http://192.0.2.20:5000"
+  echo "                     (KAVITA_BASE_URL works too, but sudo drops environment variables:"
+  echo "                     use sudo KAVITA_BASE_URL=... bash install.sh, not KAVITA_BASE_URL=... sudo ...)"
   echo "  --overwrite-env    replace an existing ${ENV_FILE} (backed up first; its secret is kept)"
+  echo "  --allow-downgrade  install this release even if it's older than the installed one"
 }
 
 KAVITA_URL_ARG=""
 OVERWRITE_ENV=""
+ALLOW_DOWNGRADE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --kavita-url)
@@ -51,6 +57,7 @@ while [ $# -gt 0 ]; do
       KAVITA_URL_ARG="$2"; shift 2 ;;
     --kavita-url=*) KAVITA_URL_ARG="${1#*=}"; shift ;;
     --overwrite-env) OVERWRITE_ENV=1; shift ;;
+    --allow-downgrade) ALLOW_DOWNGRADE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "[✗] unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -60,6 +67,20 @@ KAVITA_URL_GIVEN="${KAVITA_URL_ARG:-${KAVITA_BASE_URL:-}}"
 if [ "$(id -u)" -ne 0 ]; then
   echo "[✗] install.sh must run as root: sudo bash ./deploy/install.sh" >&2
   echo "    (in a root shell without sudo, run it without the sudo)" >&2
+  exit 1
+fi
+
+# Never quietly take an install back to an older release.
+NEW_VERSION=$(cat "${REPO_DIR}/VERSION" 2>/dev/null || true)
+OLD_VERSION=$(cat "${INSTALL_DIR}/VERSION" 2>/dev/null || true)
+if [ -n "${NEW_VERSION}" ] && [ -n "${OLD_VERSION}" ] && [ "${NEW_VERSION}" != "${OLD_VERSION}" ] && \
+   [ "$(printf '%s\n%s\n' "${NEW_VERSION}" "${OLD_VERSION}" | sort -V | tail -1)" = "${OLD_VERSION}" ] && \
+   [ -z "${ALLOW_DOWNGRADE}" ]; then
+  echo "[✗] this release is ${NEW_VERSION}, older than the installed ${OLD_VERSION}; nothing was changed." >&2
+  if [ -f "${INSTALL_DIR}/previous/VERSION" ]; then
+    echo "    To switch back to the kept previous version ($(cat "${INSTALL_DIR}/previous/VERSION")): sudo ${INSTALL_DIR}/update.sh --rollback" >&2
+  fi
+  echo "    To install ${NEW_VERSION} anyway, rerun with --allow-downgrade." >&2
   exit 1
 fi
 

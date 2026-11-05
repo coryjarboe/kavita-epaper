@@ -688,7 +688,7 @@ async def series_view(
     # Flatten download targets in reading order.
     all_items = _flatten_download_items(detail)
 
-    # Paginate the chapter list; Obook6 viewport fits ~6 rows comfortably.
+    # Paginate the chapter list; the OBOOK6 viewport fits ~6 rows comfortably.
     ch_page_size = 6
     ch_start = (chapter_page - 1) * ch_page_size
     items = all_items[ch_start : ch_start + ch_page_size]

@@ -331,6 +331,33 @@ expect "update.sh untouched" cmp -s "$I/update.sh" "$H/newer-update.sh"
 expect "configure untouched" [ "$(cat "$I/configure")" = newer ]
 finish "I15 rerun over newer update.sh/configure: never downgraded"
 
+setup shared
+write_env "$KAVITA" "$(printf 'k%.0s' $(seq 48))"
+echo 0.7.99 > "$I/VERSION"
+install_run
+expect "rc 1" [ "$RC" = 1 ]
+expect "names both versions" has "this release is $(cat "$R/VERSION"), older than the installed 0.7.99; nothing was changed"
+expect "points at --allow-downgrade" has 'rerun with --allow-downgrade'
+expect "nothing ran" [ ! -s "$H/calls" ]
+expect "VERSION untouched" [ "$(cat "$I/VERSION")" = 0.7.99 ]
+finish "I16 older release over a newer install: refused, nothing changed"
+
+setup shared
+write_env "$KAVITA" "$(printf 'k%.0s' $(seq 48))"
+echo 0.7.99 > "$I/VERSION"
+install_run --allow-downgrade
+expect "rc 0" [ "$RC" = 0 ]
+expect "installed this release" [ "$(cat "$I/VERSION")" = "$(cat "$R/VERSION")" ]
+finish "I17 --allow-downgrade: installs the older release"
+
+setup shared
+install_run --help
+expect "rc 0" [ "$RC" = 0 ]
+expect "sudo note" has 'sudo drops environment variables'
+expect "sudo form" has 'use sudo KAVITA_BASE_URL=\.\.\. bash install.sh'
+expect "flag listed" has '--allow-downgrade'
+finish "I18 --help explains sudo and --allow-downgrade"
+
 "$H/bin/systemctl" stop >/dev/null 2>&1
 echo "== $PASS PASS, $FAIL FAIL of $((PASS+FAIL))"
 [ "$FAIL" = 0 ]
