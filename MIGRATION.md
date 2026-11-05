@@ -1,6 +1,6 @@
 # Migrating older kavita-epaper installs
 
-One-time fixes for installs that predate the current `install.sh`. `update.sh` only replaces code; it never rewrites `.env` or creates directories, so older hosts keep whatever their original installer left behind.
+One-time fixes for installs that predate the current `install.sh`. `update.sh` replaces the app and manages its own folders inside the install (`venvs/`, `previous/`, `failed/`), but it never rewrites `.env` or creates the cache and releases directories, so older hosts keep whatever their original installer left behind there.
 
 ## Upgrading from before 0.7.15
 
@@ -13,7 +13,7 @@ sudo bash "$D/deploy/update.sh" kavita-epaper-vX.Y.Z.tar.gz
 rm -rf "$D"
 ```
 
-It makes the install dir root-owned before reading anything in it, never executes `.env`, and replaces `/opt/kavita-epaper/update.sh` with itself. Don't use the installed `update.sh` for this upgrade: it finishes by handing `app/`, `requirements.txt` and `VERSION` back to the service user. After this, update as usual; from 0.7.15 on, `update.sh` hands off to the copy shipped in each new release by itself.
+It makes the install dir root-owned before reading anything in it, never executes `.env`, and replaces `/opt/kavita-epaper/update.sh` with itself. Don't use the installed `update.sh` for this upgrade: it finishes by handing `app/`, `requirements.txt` and `VERSION` back to the service user. After this, update as usual: from 0.7.15 on, the installed `update.sh` hands off to the copy shipped in a newer release by itself (from 0.7.23, only to a newer one; an older release's `update.sh` is never used).
 
 The service keeps working with a root-only `.env`, because systemd reads it as root before starting the service. If you suspect the service account was compromised, review `.env` for anything you didn't put there before upgrading.
 
@@ -32,7 +32,7 @@ diff /opt/kavita-epaper/.env deploy/env.example
 - `KAVITA_EPAPER_COOKIE_SECURE` also accepts `auto` (the default), which sets the `Secure` flag only on HTTPS requests. Keep `true` if you only ever use HTTPS.
 - Old comments may give the wrong default for `KAVITA_EPAPER_RELEASES_DIR`. The real default is `/var/lib/kavita-epaper/releases`.
 
-Keep your existing `KAVITA_EPAPER_SECRET`. Changing it signs everyone out.
+Keep your existing `KAVITA_EPAPER_SECRET`, since changing it signs everyone out, unless it's shorter than 32 characters: from 0.7.21 the service refuses to start with that, so make a new one with `sudo /opt/kavita-epaper/configure new-secret` (0.7.23 or newer).
 
 Restart after editing:
 
@@ -64,8 +64,9 @@ Passing a tarball path, URL or `--github` always works regardless.
 # both default to port 8095, so stop the old service first
 sudo systemctl disable --now kavita-boox
 sudo bash ./deploy/install.sh        # from an extracted kavita-epaper release
-# copy KAVITA_BASE_URL and any other settings from /opt/kavita-boox/.env;
-# variables were renamed from KAVITA_BOOX_* to KAVITA_EPAPER_*
+# give install.sh the Kavita address from /opt/kavita-boox/.env (KAVITA_BASE_URL),
+# then copy other settings you changed into /opt/kavita-epaper/.env; variables
+# were renamed from KAVITA_BOOX_* to KAVITA_EPAPER_*
 sudo systemctl restart kavita-epaper
 # once it works:
 sudo rm -rf /opt/kavita-boox /var/cache/kavita-boox /etc/systemd/system/kavita-boox.service
@@ -74,6 +75,5 @@ sudo systemctl daemon-reload
 ```
 
 Users sign in again after the move, because the new install generates a new session secret.
-
 
 For version-by-version changes, see [`CHANGELOG.md`](./CHANGELOG.md).

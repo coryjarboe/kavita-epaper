@@ -12,7 +12,7 @@ kavita-epaper is a small FastAPI proxy that sits in front of your existing Kavit
 
 ## Quick start
 
-1. **Have** a Debian 12 or Ubuntu 22.04+ machine (VM or LXC) with systemd and Python 3.10 or newer, which can reach your Kavita server. Root without `sudo` is fine: leave out `sudo` below.
+1. **Have** a Debian 12 machine (VM or LXC) with systemd and Python 3.10 or newer, which can reach your Kavita server (see [Requirements](#requirements) for what's tested). Root without `sudo` is fine: leave out `sudo` below.
 2. **Install** the latest release:
    ```bash
    LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
@@ -21,7 +21,7 @@ kavita-epaper is a small FastAPI proxy that sits in front of your existing Kavit
    D=$(mktemp -d); curl -fsSL "$LATEST" | tar -xzf - -C "$D"
    sudo bash "$D/deploy/install.sh"; rm -rf "$D"
    ```
-3. **Give it Kavita's address** when asked, as this machine reaches it (for example `http://192.0.2.20:5000`). It's checked before it's saved; press Enter if Kavita runs on the same machine. To skip the question, add `--kavita-url http://192.0.2.20:5000` to the `install.sh` command in step 2.
+3. **Give it Kavita's address** when asked, as this machine reaches it (for example `http://192.0.2.20:5000`). It's checked before it's saved; press Enter if Kavita runs on the same machine. If Kavita runs in Docker on another machine, use that machine's IP and the port Docker publishes (Kavita's default is `5000`), not `localhost`. To skip the question, add `--kavita-url http://192.0.2.20:5000` to the `install.sh` command in step 2.
 4. **Open** `http://<this machine's IP>:8095` in a browser. The installer prints the exact address.
 5. **Sign in** with your Kavita username and password.
 
@@ -56,9 +56,9 @@ If you try it on something else, open an issue with the device name and any quir
 
 ## Requirements
 
-- A reachable Kavita instance (1.0+, needs `book-page` and `get-progress` endpoints).
-- Debian or Ubuntu LXC/VM with `systemd` and Python 3.10 or newer (`install.sh` adds `python3-venv` and `rsync` if missing). Tested on Debian 12 (Python 3.11). Debian 11 (Python 3.9) won't work.
-- Not tested yet, reports welcome: unprivileged LXC containers without nesting (the service's systemd sandboxing may not start there), Ubuntu, Python 3.10 and 3.12 or newer.
+- A reachable Kavita server. Tested with Kavita 0.9.0.2; kavita-epaper uses its `book-page`, `get-progress` and `progress` endpoints, plus `/api/health` to check the address.
+- A Debian-family LXC or VM with `systemd` and Python 3.10 or newer, plus `python3-venv`, `python3-pip` and `rsync` (`install.sh` installs those three with apt if they're missing). Tested on Debian 12 (Python 3.11). Debian 11 (Python 3.9) won't work.
+- Not tested yet, reports welcome: Ubuntu (22.04 and newer have Python 3.10+), unprivileged LXC containers without nesting (the service's systemd sandboxing may not start there), Python 3.10 and 3.12 or newer.
 - A reverse proxy with TLS (NPM, Caddy, Traefik, etc.) if you're exposing it past a trusted LAN.
 - Optional: PWA-capable browser (Chrome, Edge, Safari) for install-to-homescreen.
 
@@ -70,19 +70,7 @@ Pick whichever fits how you got the code.
 
 ### Option A: latest release from GitHub (recommended)
 
-```bash
-# Resolve the latest release tarball URL via the GitHub API, download, extract, install
-LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
-  | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*kavita-epaper-v[0-9][^"]*\.tar\.gz"' \
-  | head -1 | grep -oE 'https://[^"]+')
-D=$(mktemp -d)
-curl -fsSL "$LATEST" | tar -xzf - -C "$D"
-cd "$D"
-sudo bash ./deploy/install.sh
-cd - >/dev/null && rm -rf "$D"
-```
-
-Pulls the latest tagged release. What most people want.
+Use the command in [Quick start](#quick-start), step 2. It finds the latest tagged release through GitHub's API, downloads and extracts it to a temporary folder, runs its `install.sh`, and removes the folder. What most people want.
 
 ### Option B: clone the repo (gets latest `main`, may be ahead of releases)
 
@@ -112,14 +100,14 @@ For offline installs, air-gapped environments, or pinning a specific version.
 
 This creates:
 
-- `/opt/kavita-epaper/` (code and venv)
-- `/opt/kavita-epaper/.env` (config, auto-generated session secret, edit to point at your Kavita)
+- `/opt/kavita-epaper/` (code, the venv in `venvs/` behind a `venv` symlink, `update.sh` and `configure`; see [File layout](#file-layout))
+- `/opt/kavita-epaper/.env` (settings: the Kavita address you gave and a generated session secret; change them with [configure](#changing-settings))
 - `/var/cache/kavita-epaper/covers/` (grayscale cover cache)
 - `/var/lib/kavita-epaper/releases/` (drop release tarballs here for no-args `update.sh`)
 - `kavita-epaper` system user
 - `kavita-epaper.service`
 
-`install.sh` asks for Kavita's address when run in a terminal (default `http://127.0.0.1:5000`, Kavita on the same machine) and checks it before saving it. You can also pass it: `--kavita-url http://10.0.0.50:5000`, or `KAVITA_BASE_URL=... ` in the environment. When it isn't run in a terminal and Kavita doesn't answer, it warns, installs anyway, and says "Kavita: not reachable" at the end. It then starts the service, waits until the login page answers, and prints the addresses to open.
+`install.sh` asks for Kavita's address when run in a terminal (default `http://127.0.0.1:5000`, Kavita on the same machine) and checks it before saving it. You can also pass it with `--kavita-url http://10.0.0.50:5000`. It also reads `KAVITA_BASE_URL` from the environment, but `sudo` drops environment variables, so `KAVITA_BASE_URL=... sudo bash install.sh` doesn't pass it on; use `--kavita-url` (or `sudo KAVITA_BASE_URL=... bash install.sh`). When it isn't run in a terminal and Kavita doesn't answer, it warns, installs anyway, and says "Kavita: not reachable" at the end. It then starts the service, waits until the login page answers, and prints the addresses to open.
 
 An existing `/opt/kavita-epaper/.env` is never overwritten. Rerunning `install.sh` keeps it (and refuses a new `--kavita-url`); to change the Kavita address, use the configure command (see [Changing settings](#changing-settings)):
 
@@ -167,11 +155,11 @@ Caddy and Traefik work the same way. Single HTTP upstream, no special headers ne
 
 ### If your reverse proxy is on the same host
 
-Set `KAVITA_EPAPER_HOST=127.0.0.1` and `KAVITA_EPAPER_FORWARDED_ALLOW_IPS=127.0.0.1` in `/opt/kavita-epaper/.env` and restart. Limits exposure to localhost so the proxy is the only way in.
+Bind kavita-epaper to loopback and trust only the local proxy, so the proxy is the only way in: see [Don't expose the app port](#security) and [Trust only your proxy's forwarded headers](#security) under Security.
 
 ### Direct access without a reverse proxy
 
-For a quick try, it works directly on its bound IP and port. Open `http://<host-ip>:8095` in a browser. The session cookie is issued without the `Secure` flag when accessed over plain HTTP (`KAVITA_EPAPER_COOKIE_SECURE=auto` does this by default), so login persists.
+For a quick try, it works directly on its bound IP and port. Open `http://<host-ip>:8095` in a browser. With the default `KAVITA_EPAPER_COOKIE_SECURE=auto`, sign-in sticks over plain HTTP too (see the setting in [All settings](#all-settings)).
 
 > **Security note.** kavita-epaper uses Kavita's own auth model. Your credentials are posted to Kavita on first sign-in over whatever transport you've configured. If you're comfortable accessing Kavita over plain HTTP on a trusted LAN, kavita-epaper sits at the same level. For anything internet-facing, put TLS in front of both, and see [Security](#security).
 
@@ -181,24 +169,25 @@ The defaults suit a trusted home LAN. For anything beyond that:
 
 - **Trust only your proxy's forwarded headers** (`KAVITA_EPAPER_FORWARDED_ALLOW_IPS`).
   - The default `*` lets any client send `X-Forwarded-For` and `X-Forwarded-Proto`, so anyone who can reach the port can fake their logged IP and make plain HTTP look like HTTPS.
-  - Set it in `.env` to your proxy's IP, e.g. `192.0.2.10`, or `127.0.0.1` for a proxy on the same host.
+  - Set it to your proxy's IP, e.g. `sudo /opt/kavita-epaper/configure trusted-proxies 192.0.2.10`, or `127.0.0.1` for a proxy on the same host.
   - Several proxies: a comma-separated list, no spaces (`192.0.2.10,192.0.2.11`). CIDR ranges like `192.0.2.0/28` work too. IP addresses only, not hostnames.
   - Requests through a trusted proxy are logged with the real client IP (port `0`), and `KAVITA_EPAPER_COOKIE_SECURE=auto` sees the proxy's HTTPS. Anyone else is logged as they connect and their forwarded headers are ignored.
   - If the list misses your proxy, the logs show the proxy's IP and `auto` treats requests as plain HTTP, so the cookie loses its `Secure` flag.
   - Sign-in errors show the internal Kavita URL only to clients with private or loopback addresses. With `*`, a remote client can fake a private address and see it: another reason to set this.
-- **Use HTTPS.** Put a TLS reverse proxy in front (see [Reverse proxy](#reverse-proxy)). Keep `KAVITA_EPAPER_COOKIE_SECURE` at `auto`, or `true` if you only ever use HTTPS (with `true`, sign-in won't stick over plain HTTP).
+- **Use HTTPS.** Put a TLS reverse proxy in front (see [Reverse proxy](#reverse-proxy)). Keep `KAVITA_EPAPER_COOKIE_SECURE` at `auto`, or set `true` if you only ever use HTTPS (`sudo /opt/kavita-epaper/configure cookie-secure true`; what each value does is in [All settings](#all-settings)).
 - **Don't expose the app port.**
-  - Proxy on the same host: set `KAVITA_EPAPER_HOST=127.0.0.1`.
+  - Proxy on the same host: set `KAVITA_EPAPER_HOST=127.0.0.1` in `/opt/kavita-epaper/.env` (`configure` doesn't change the bind address) and run `sudo systemctl restart kavita-epaper`.
   - Proxy elsewhere: firewall port `8095` (`KAVITA_EPAPER_PORT`) to the proxy only, e.g. `sudo ufw allow from 192.0.2.10 to any port 8095 proto tcp` and no other rule for that port.
-- **Check Kavita's certificate.** If Kavita itself uses HTTPS with a certificate from a private CA, point `KAVITA_CA_BUNDLE` at a PEM file with that CA: `sudo /opt/kavita-epaper/configure ca-bundle /etc/kavita-epaper/kavita-ca.pem` (see [Kavita over HTTPS](#kavita-over-https)). `KAVITA_TLS_VERIFY=false` turns the check off; not recommended, since anything between kavita-epaper and Kavita can then read the traffic, passwords included. It's logged as a warning at every start.
+- **Check Kavita's certificate.** If Kavita itself uses HTTPS with a private CA, give kavita-epaper that CA rather than turning the check off; see [Kavita over HTTPS](#kavita-over-https).
 - **Use a long random secret.**
-  - `install.sh` generates `KAVITA_EPAPER_SECRET`. To make one: `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`. The service refuses to start if it's missing, the `env.example` placeholder, or shorter than 32 characters.
+  - `install.sh` generates `KAVITA_EPAPER_SECRET`; `sudo /opt/kavita-epaper/configure new-secret` makes a new one. The service refuses to start if it's missing, the `env.example` placeholder, or shorter than 32 characters.
   - It encrypts session cookies and keys the cover cache. Changing it signs everyone out, and covers are fetched again.
   - To rotate without signing everyone out: `sudo /opt/kavita-epaper/configure new-secret --keep-sessions`. The old secret is kept as `KAVITA_EPAPER_SECRET_PREVIOUS`, and old cookies are re-issued under the new secret the next time they open a page.
   - After `KAVITA_EPAPER_SESSION_TTL` (30 days by default): `sudo /opt/kavita-epaper/configure forget-previous-secret`. Anyone who hasn't opened a page since the rotation is signed out then.
   - `configure new-secret` without `--keep-sessions` signs everyone out at once.
 - **Keep files root-owned.** `/opt/kavita-epaper/.env` stays `root:root` mode `600` (systemd reads it before switching to the service user), and `/opt/kavita-epaper` stays owned by root. `install.sh` and `update.sh` set both.
-- **Update with `update.sh`.** It verifies the new unit, installs dependencies before stopping the service, resets ownership and the `.env` mode, and checks the service comes back up (see [Update](#update)).
+- **Mind the `.env` backups.** `configure` and `install.sh --overwrite-env` keep the newest 5 copies of `.env` in `/var/backups/kavita-epaper.env.<timestamp>`, root-only (`600`). They contain the session secret; remove them if you retire the install (see [Uninstall](#uninstall)).
+- **Update with `update.sh`.** Updates are all or nothing and reset ownership and the `.env` mode; see [Update](#update).
 
 ## Update
 
@@ -220,7 +209,7 @@ sudo /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 
 Mode 3 picks the highest-versioned `kavita-epaper-*.tar.gz` in `$KAVITA_EPAPER_RELEASES_DIR`. Defaults to `/var/lib/kavita-epaper/releases`. Adjust in `.env` if you drop tarballs somewhere else.
 
-Mode 4 hits GitHub's `/releases/latest` API for the given `owner/repo`, finds the `kavita-epaper-v*.tar.gz` asset, and downloads it. Anonymous API access is rate-limited to 60 requests per hour per IP. For private repos or higher limits, export `GITHUB_TOKEN` and use `sudo -E`:
+Mode 4 hits GitHub's `/releases/latest` API for the given `owner/repo`, finds the `kavita-epaper-v*.tar.gz` asset, and downloads it. **Check the version first:** if the latest GitHub release is older than what you run (the GitHub releases currently lag behind), mode 4 installs that older release, which takes the app back to it; `update.sh` doesn't refuse older versions yet. Compare `sudo /opt/kavita-epaper/update.sh --status` with the version on the releases page. Anonymous API access is rate-limited to 60 requests per hour per IP. For private repos or higher limits, export `GITHUB_TOKEN` and use `sudo -E`:
 
 ```bash
 export GITHUB_TOKEN=ghp_...
@@ -245,7 +234,24 @@ sudo /opt/kavita-epaper/update.sh --rollback --yes    # no question (needed when
 
 `--rollback` toggles: run it again and it switches forward. It's checked like an update (active and login page) and undone if the previous version doesn't come up. Installing an older release's tarball also works. Either way only the app goes back: `update.sh` and `configure` always stay the newest version you've installed. Unit backups in `/var/backups` are pruned to the newest 5.
 
+`--status` prints something like:
+
+```
+current:   0.7.23   (venv: venvs/legacy-20261103-230519)
+previous:  0.7.22   (venv: venvs/legacy-20261103-230519)
+--rollback would switch from 0.7.23 to 0.7.22 (and a second --rollback back to 0.7.23).
+update.sh: 0.7.23
+```
+
 The first update to 0.7.23 or newer also moves the existing `venv/` folder into `venvs/` and puts a symlink in its place; nothing needs reinstalling.
+
+### If an update fails
+
+- **"was not stopped and is still running …"** (secret, unit or venv problem): nothing changed. Fix what the message names (for a weak secret, `sudo /opt/kavita-epaper/configure new-secret`) and run the update again.
+- **"update to X failed; rolled back, running Y again":** the new version didn't come up, and everything is back as it was. See why with `journalctl -u kavita-epaper -n 50 --no-pager`; the new version's code is in `/opt/kavita-epaper/failed/` until the next update. `update.sh --status` confirms what's running. Report it, or try a different release.
+- **"… doesn't come up after putting it back either":** all files are as they were before the update, but the old version won't start either, so the problem is outside the update (for example `.env`, the port, or Kavita settings the app refuses). Read the journal, check `sudo /opt/kavita-epaper/configure show`, and if you can't fix it, restore from a backup.
+- **A working update that you want to undo:** `sudo /opt/kavita-epaper/update.sh --rollback`.
+- **Interrupted update** (power loss): run any `update.sh` command; it undoes the half-done update and says so.
 
 ## Config
 
@@ -269,36 +275,34 @@ Whether Kavita answers is shown after each change, but never undoes it. Everythi
 
 ### All settings
 
-`/opt/kavita-epaper/.env`. The ones you'll actually touch:
+`/opt/kavita-epaper/.env`. The ones you'll actually touch; the ones ending in a `configure` command are best changed with it (see [Changing settings](#changing-settings)):
 
 | Variable                     | Default                         | Notes                                                |
 |------------------------------|---------------------------------|------------------------------------------------------|
-| `KAVITA_BASE_URL`            | `http://127.0.0.1:5000`         | Kavita API address (server-to-server). Change if Kavita isn't local. Include a sub-path if Kavita has one. |
-| `KAVITA_CA_BUNDLE`           | unset                           | PEM file with a private CA for Kavita over HTTPS. See [Kavita over HTTPS](#kavita-over-https). |
-| `KAVITA_TLS_VERIFY`          | `true`                          | `false` skips checking Kavita's certificate. Not recommended. |
+| `KAVITA_BASE_URL`            | `http://127.0.0.1:5000`         | Kavita API address (server-to-server). Include a sub-path if Kavita has one. `configure kavita-url` |
+| `KAVITA_CA_BUNDLE`           | unset                           | PEM file with a private CA for Kavita over HTTPS. See [Kavita over HTTPS](#kavita-over-https). `configure ca-bundle` |
+| `KAVITA_TLS_VERIFY`          | `true`                          | `false` skips checking Kavita's certificate. Not recommended. `configure kavita-tls-verify` |
 | `KAVITA_EPAPER_HOST`         | `0.0.0.0`                       | Interface to bind. `127.0.0.1` is loopback only.     |
 | `KAVITA_EPAPER_PORT`         | `8095`                          | TCP port to listen on.                               |
-| `KAVITA_EPAPER_SECRET`       | auto-generated                  | Encrypts session cookies. At least 32 characters; the service won't start without one. Changing it signs everyone out; see below. |
-| `KAVITA_EPAPER_SECRET_PREVIOUS` | unset                        | Old secret during a rotation; its cookies are still accepted. |
-| `KAVITA_EPAPER_COOKIE_SECURE`| `auto`                          | `auto` follows request scheme. Or pin `true`/`false`.|
+| `KAVITA_EPAPER_SECRET`       | auto-generated                  | Encrypts session cookies. At least 32 characters; the service won't start without one. Changing it signs everyone out; see [Security](#security). `configure new-secret` |
+| `KAVITA_EPAPER_SECRET_PREVIOUS` | unset                        | Old secret during a rotation; its cookies are still accepted. Set by `configure new-secret --keep-sessions`, removed by `configure forget-previous-secret`. |
+| `KAVITA_EPAPER_COOKIE_SECURE`| `auto`                          | Session cookie's `Secure` flag. `auto`: only on HTTPS requests, so the same install works through an HTTPS proxy and directly over HTTP. `true`: always; sign-in won't stick over plain HTTP. `false`: never; for testing only. `configure cookie-secure` |
 | `KAVITA_EPAPER_SESSION_TTL`  | `2592000` (30d)                 | Session lifetime in seconds.                         |
 | `KAVITA_EPAPER_GRAYSCALE`    | `true`                          | Pre-render covers to grayscale. Disable for color.   |
-| `KAVITA_EPAPER_COVER_TTL`    | `86400` (1 day)                 | Seconds a cached cover is served before refetching. `0` = no disk cache. Cached per user. Browsers keep a cover for at most an hour, and never past this. |
-| `KAVITA_EPAPER_FORWARDED_ALLOW_IPS` | `*`                      | Who may set `X-Forwarded-*` headers. Your proxy's IP, e.g. `192.0.2.10`; see [Security](#security). |
+| `KAVITA_EPAPER_COVER_TTL`    | `86400` (1 day)                 | Seconds a cached cover is served before refetching. `0` = no disk cache. Cached per user. Browsers keep a cover for at most an hour, and never past this. `configure cover-ttl` |
+| `KAVITA_EPAPER_FORWARDED_ALLOW_IPS` | `*`                      | Who may set `X-Forwarded-*` headers. Your proxy's IP, e.g. `192.0.2.10`; see [Security](#security). `configure trusted-proxies` |
 | `KAVITA_EPAPER_KEEPALIVE_SECONDS` | `0` (off)                  | Reader pings `/ping` this often while visible, for e-readers whose Wi-Fi drops between page loads. Try `25`. |
 | `KAVITA_EPAPER_RELEASES_DIR` | `/var/lib/kavita-epaper/releases` | Where `update.sh` looks when called with no args.  |
 
-Restart after changes:
+After editing `.env` by hand, restart:
 
 ```bash
 sudo systemctl restart kavita-epaper
 ```
 
-To rotate `KAVITA_EPAPER_SECRET` without signing everyone out, see [Security](#security).
-
 ### Kavita under a sub-path
 
-If Kavita is served under a path (Kavita's *Base URL* setting, for example `/kavita`), include it: `KAVITA_BASE_URL=http://10.0.0.50:5000/kavita`. kavita-epaper adds `/api/...` after it.
+If Kavita is served under a path (Kavita's *Base URL* setting, for example `/kavita`), include it: `sudo /opt/kavita-epaper/configure kavita-url http://10.0.0.50:5000/kavita`. kavita-epaper adds `/api/...` after it.
 
 ### Kavita over HTTPS
 
@@ -311,7 +315,9 @@ sudo chmod 644 /etc/kavita-epaper/kavita-ca.pem
 sudo /opt/kavita-epaper/configure ca-bundle /etc/kavita-epaper/kavita-ca.pem
 ```
 
-The file needs to be readable by the `kavita-epaper` user and outside `/home` and `/root`, which the service can't see. If it's missing or not a PEM certificate, the service refuses to start and the log says why. The certificate is trusted in addition to the system CAs.
+The file needs to be readable by the `kavita-epaper` user and outside `/home` and `/root`, which the service can't see; `configure` checks both. If it's missing or not a PEM certificate, the service refuses to start and the log says why. The certificate is trusted in addition to the system CAs.
+
+`KAVITA_TLS_VERIFY=false` (`configure kavita-tls-verify off`) turns the check off instead. Not recommended: anything between kavita-epaper and Kavita can then read the traffic, passwords included. It's logged as a warning at every start.
 
 ### Health check
 
@@ -319,7 +325,7 @@ The file needs to be readable by the `kavita-epaper` user and outside `/home` an
 
 ### Service unit
 
-`install.sh` and `update.sh` overwrite `/etc/systemd/system/kavita-epaper.service` whenever a release ships a changed one. `update.sh` checks the new unit with `systemd-analyze verify` first, saves the old one to `/var/backups/kavita-epaper.service.<timestamp>`, and puts it back if the service won't start. Edits made directly to the unit file are lost at that point, so put local changes in a drop-in, which updates never touch:
+`install.sh` installs the release's unit as `/etc/systemd/system/kavita-epaper.service` every time it runs. `update.sh` replaces it when a release ships a changed one: it checks the new unit with `systemd-analyze verify` first, saves the old one to `/var/backups/kavita-epaper.service.<timestamp>` (the newest 5 are kept) and a copy in `previous/` for `--rollback`, and puts it back if the new version doesn't come up. Edits made directly to the unit file are lost at that point, so put local changes in a drop-in, which updates never touch:
 
 ```bash
 sudo systemctl edit kavita-epaper
@@ -339,9 +345,13 @@ Settings the app reads (`KAVITA_*`) still belong in `.env`.
 ```bash
 sudo systemctl disable --now kavita-epaper
 sudo rm -rf /opt/kavita-epaper /var/cache/kavita-epaper /var/lib/kavita-epaper /etc/systemd/system/kavita-epaper.service /etc/systemd/system/kavita-epaper.service.d
+sudo rm -f /var/backups/kavita-epaper.env.* /var/backups/kavita-epaper.service.*
+sudo rm -rf /etc/kavita-epaper     # only if you put a CA file there
 sudo userdel kavita-epaper
 sudo systemctl daemon-reload
 ```
+
+The `/var/backups/kavita-epaper.env.*` files are copies of `.env` and contain the session secret, so don't leave them behind.
 
 ## What this isn't
 
@@ -371,7 +381,7 @@ sudo systemctl daemon-reload
 └── configure             # changes settings safely
 ```
 
-Listens on `0.0.0.0:8095` by default. Set `KAVITA_EPAPER_HOST=127.0.0.1` in `.env` for loopback-only when the reverse proxy is on the same host. Always front it with a TLS-terminating reverse proxy in production.
+Listens on `0.0.0.0:8095` by default; for loopback only and other hardening, see [Security](#security).
 
 ## License
 

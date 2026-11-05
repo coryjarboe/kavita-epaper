@@ -305,6 +305,8 @@ upgrade notes called out where they require manual steps.
 
 ## [0.7.15] - root-owned install dir
 
+_Note added later: this release wasn't tagged at the time. The `v0.7.15` tag was added afterwards on `996a9e2`, the last commit with this version._
+
 ### Security
 - `install.sh` left `/opt/kavita-epaper` (including `.env`, `update.sh`
   and `venv/`) owned by the `kavita-epaper` service user. `update.sh` runs
