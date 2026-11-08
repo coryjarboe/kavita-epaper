@@ -321,8 +321,8 @@ upgrade notes called out where they require manual steps.
   (`sudo systemctl edit kavita-epaper`, which writes
   `kavita-epaper.service.d/override.conf`); see README, "Service unit".
 - Upgrading from 0.7.15 installed before the `update.sh` handoff existed:
-  run `deploy/update.sh` from the extracted tarball, as in README,
-  "Migration", so this release's unit step runs.
+  run `deploy/update.sh` from the extracted tarball, as in `MIGRATION.md`,
+  so this release's unit step runs.
 - Keys already written to the journal stay there. Regenerate the Kavita
   auth keys of every user who used kavita-epaper before this release.
   The session cookie keeps the key from sign-in, so after regenerating,
@@ -356,7 +356,7 @@ _Note added later: this release wasn't tagged at the time. The `v0.7.15` tag was
 - The `update.sh` already installed on a pre-0.7.15 host predates the
   handoff, sources `.env`, and chowns `app/` back to the service user. For
   this upgrade run `deploy/update.sh` from the extracted tarball instead;
-  see README, "Migration".
+  see `MIGRATION.md`.
 
 ## [0.7.14] - fix EPUB image rendering
 

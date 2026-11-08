@@ -12,7 +12,7 @@ kavita-epaper is a small FastAPI proxy that sits in front of your existing Kavit
 
 ## Quick start
 
-1. **Have** a Debian 12 machine (VM or LXC) with systemd and Python 3.10 or newer, which can reach your Kavita server (see [Requirements](#requirements) for what's tested). Root without `sudo` is fine: leave out `sudo` below.
+1. **Have** a Debian 12 machine (VM or LXC) with systemd, `curl` and Python 3.10 or newer, which can reach your Kavita server (see [Requirements](#requirements) for what's tested). Root without `sudo` is fine: leave out `sudo` below.
 2. **Install** the latest release:
    ```bash
    LATEST=$(curl -fsSL https://api.github.com/repos/coryjarboe/kavita-epaper/releases/latest \
@@ -56,7 +56,7 @@ If you try it on something else, open an issue with the device name and any quir
 
 ## Requirements
 
-- A reachable Kavita server. Tested with Kavita 0.9.0.2; kavita-epaper uses its `book-page`, `get-progress` and `progress` endpoints, plus `/api/health` to check the address.
+- A reachable Kavita server. Tested with Kavita 0.9.1.4; kavita-epaper uses its `book-page`, `get-progress` and `progress` endpoints, plus `/api/health` to check the address.
 - A Debian-family LXC or VM with `systemd` and Python 3.10 or newer, plus `python3-venv`, `python3-pip` and `rsync` (`install.sh` installs those three with apt if they're missing). Tested on Debian 12 (Python 3.11). Debian 11 (Python 3.9) won't work.
 - Not tested yet, reports welcome: Ubuntu (22.04 and newer have Python 3.10+), unprivileged LXC containers without nesting (the service's systemd sandboxing may not start there), Python 3.10 and 3.12 or newer.
 - A reverse proxy with TLS (NPM, Caddy, Traefik, etc.) if you're exposing it past a trusted LAN.
@@ -207,9 +207,9 @@ sudo /opt/kavita-epaper/update.sh
 sudo /opt/kavita-epaper/update.sh --github coryjarboe/kavita-epaper
 ```
 
-Mode 3 picks the highest-versioned `kavita-epaper-*.tar.gz` in `$KAVITA_EPAPER_RELEASES_DIR`. Defaults to `/var/lib/kavita-epaper/releases`. Adjust in `.env` if you drop tarballs somewhere else.
+Mode 3 picks the highest-versioned `kavita-epaper-v*.tar.gz` in `$KAVITA_EPAPER_RELEASES_DIR`. Defaults to `/var/lib/kavita-epaper/releases`. Adjust in `.env` if you drop tarballs somewhere else.
 
-Mode 4 hits GitHub's `/releases/latest` API for the given `owner/repo`, finds the `kavita-epaper-v*.tar.gz` asset, and downloads it. If the latest GitHub release is older than what you run (the GitHub releases currently lag behind), `update.sh` refuses it and changes nothing; see [Going back to an older version](#going-back-to-an-older-version). Anonymous API access is rate-limited to 60 requests per hour per IP. For private repos or higher limits, export `GITHUB_TOKEN` and use `sudo -E`:
+Mode 4 hits GitHub's `/releases/latest` API for the given `owner/repo`, finds the `kavita-epaper-v*.tar.gz` asset, and downloads it. If you run a version newer than the latest GitHub release (a build from `main`, for example), `update.sh` refuses the older release and changes nothing; see [Going back to an older version](#going-back-to-an-older-version). Anonymous API access is rate-limited to 60 requests per hour per IP. For private repos or higher limits, export `GITHUB_TOKEN` and use `sudo -E`:
 
 ```bash
 export GITHUB_TOKEN=ghp_...
@@ -379,7 +379,7 @@ The `/var/backups/kavita-epaper.env.*` files are copies of `.env` and contain th
 │   ├── main.py
 │   ├── kavita_check.py   # reaching Kavita (used by the app and install.sh)
 │   ├── static/           # CSS, JS, icons, manifest
-│   └── templates/        # Jinja2 (base, library, series, read, login)
+│   └── templates/        # Jinja2 (base, library, series, read, login, error)
 ├── venv -> venvs/<id>    # symlink to the current virtualenv
 ├── venvs/                # one venv per set of dependencies (current and previous)
 ├── previous/             # the kept previous version, for update.sh --rollback
