@@ -394,6 +394,10 @@ The `/var/backups/kavita-epaper.env.*` files are copies of `.env` and contain th
 
 Listens on `0.0.0.0:8095` by default; for loopback only and other hardening, see [Security](#security).
 
+## Credits
+
+kavita-epaper is developed with Claude (Anthropic). Claude wrote the code, scripts and docs under my direction and review, first in claude.ai and later with Claude Code. Commits made with Claude Code carry a `Co-Authored-By: Claude` trailer.
+
 ## License
 
 MIT. See [`LICENSE`](./LICENSE).
